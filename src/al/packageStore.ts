@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import { AlPackage, AlAppJsonDependency, AlAppManifest } from './types';
+import { AlPackage, AlAppJsonDependency, AlAppManifest, AlObject } from './types';
 import { readAppFile, readAppManifest } from './packageReader';
 import { parseAlSource } from './parser';
 import * as logger from './logger';
@@ -62,7 +62,7 @@ export async function reloadAllPackages(): Promise<void> {
         }
 
         // Read declared dependencies
-        const deps = readAppJsonDependencies(appJsonPath);
+        const deps = await readAppJsonDependencies(appJsonPath);
         logger.debug(`${deps.length} dependencies declared in ${appJsonPath}`);
         for (const dep of deps) {
             const key = depKey(dep);
@@ -104,19 +104,24 @@ export async function reloadAllPackages(): Promise<void> {
 
     // ── Step 2: Read manifests of all candidates and select best matches ────
     const manifests: AlAppManifest[] = [];
+    // Fast path: resolve identity from the filename alone where possible.
+    // For non-standard filenames, fall back to reading the manifest from the ZIP.
+    const zipFallbacks: string[] = [];
     for (const filePath of candidateFiles) {
-        // Fast path: try to resolve identity from the filename alone
         const fromName = parseAppFilename(filePath);
         if (fromName) {
             manifests.push(fromName);
         } else {
-            // Filename doesn't follow Publisher_Name_Version.app convention –
-            // fall back to reading the manifest from inside the ZIP.
             logger.debug(`Non-standard filename, reading manifest from ZIP: ${filePath}`);
-            const manifest = await readAppManifest(filePath);
-            if (manifest) {
-                manifests.push(manifest);
-            }
+            zipFallbacks.push(filePath);
+        }
+    }
+
+    // Read non-standard manifests in parallel
+    if (zipFallbacks.length > 0) {
+        const fallbackResults = await Promise.all(zipFallbacks.map(f => readAppManifest(f)));
+        for (const m of fallbackResults) {
+            if (m) { manifests.push(m); }
         }
     }
 
@@ -136,7 +141,7 @@ export async function reloadAllPackages(): Promise<void> {
     //   - If the package is one of the always-included Microsoft platform
     //     packages → take the highest available version.
     //   - Otherwise skip it entirely.
-    const selectedFiles: string[] = [];
+    const selectedFiles: { filePath: string; manifest: AlAppManifest }[] = [];
     for (const [key, candidates] of manifestsByKey) {
         const dep = requiredDeps.get(key);
         let eligible: AlAppManifest[];
@@ -161,10 +166,14 @@ export async function reloadAllPackages(): Promise<void> {
         eligible.sort((a, b) => compareVersions(parseVersion(b.version), parseVersion(a.version)));
         const best = eligible[0];
         logger.log(`Selected ${best.publisher} - ${best.name} ${best.version} (${reason})`);
-        selectedFiles.push(best.filePath);
+        selectedFiles.push({ filePath: best.filePath, manifest: best });
     }
 
     // ── Step 3: Fully parse and load the selected .app files ────────────────
+    // Keep exactly CONCURRENCY tasks in-flight at all times: as soon as one
+    // finishes the next file is picked up immediately, avoiding the stall-on-
+    // slowest-in-batch problem of a fixed chunked approach.
+    const CONCURRENCY = 4;
     if (selectedFiles.length > 0) {
         await vscode.window.withProgress(
             {
@@ -174,19 +183,27 @@ export async function reloadAllPackages(): Promise<void> {
             },
             async (progress) => {
                 const total = selectedFiles.length;
+                let done = 0;
+                let next = 0;
 
-                for (const appFile of selectedFiles) {
-                    const label = path.basename(appFile);
-                    progress.report({ message: label, increment: 0 });
+                progress.report({ message: `0 / ${total}`, increment: 0 });
 
-                    const pkg = await readAppFile(appFile);
-                    if (pkg) {
-                        store.set(pkg.id, pkg);
-                        logger.debug(`Loaded package: ${pkg.publisher} - ${pkg.name} ${pkg.version} (${pkg.objects.length} objects)`);
+                // Each "worker" pulls the next file from the queue until exhausted.
+                const worker = async () => {
+                    while (next < total) {
+                        const idx = next++;
+                        const { filePath, manifest } = selectedFiles[idx];
+                        const pkg = await readAppFile(filePath, manifest);
+                        if (pkg) {
+                            store.set(pkg.id, pkg);
+                            logger.debug(`Loaded package: ${pkg.publisher} - ${pkg.name} ${pkg.version} (${pkg.objects.length} objects)`);
+                        }
+                        done++;
+                        progress.report({ message: `${done} / ${total}`, increment: (1 / total) * 100 });
                     }
+                };
 
-                    progress.report({ message: label, increment: (1 / total) * 100 });
-                }
+                await Promise.all(Array.from({ length: Math.min(CONCURRENCY, total) }, worker));
             }
         );
     } else {
@@ -194,12 +211,16 @@ export async function reloadAllPackages(): Promise<void> {
     }
 
     // ── Step 4: Parse local workspace projects as packages ─────────────────
-    for (const folder of folders) {
-        const folderPath = folder.uri.fsPath;
-        const appJsonPath = path.join(folderPath, 'app.json');
-        if (!fs.existsSync(appJsonPath)) { continue; }
-
-        const localPkg = loadLocalProject(folderPath, appJsonPath);
+    // Run all workspace folders in parallel – each reads its own .al files.
+    const localPkgs = await Promise.all(
+        folders
+            .filter(folder => fs.existsSync(path.join(folder.uri.fsPath, 'app.json')))
+            .map(folder => loadLocalProject(
+                folder.uri.fsPath,
+                path.join(folder.uri.fsPath, 'app.json')
+            ))
+    );
+    for (const localPkg of localPkgs) {
         if (localPkg) {
             store.set(localPkg.id, localPkg);
             logger.log(`Loaded local project: ${localPkg.publisher} - ${localPkg.name} ${localPkg.version} (${localPkg.objects.length} objects)`);
@@ -219,13 +240,13 @@ export async function reloadAllPackages(): Promise<void> {
  * Parse all .al source files in a workspace folder and return them as an
  * AlPackage, using the project's app.json for identity metadata.
  */
-function loadLocalProject(folderPath: string, appJsonPath: string): AlPackage | undefined {
+async function loadLocalProject(folderPath: string, appJsonPath: string): Promise<AlPackage | undefined> {
     let publisher = 'Unknown';
     let name = path.basename(folderPath);
     let version = '0.0.0.0';
 
     try {
-        const json = JSON.parse(fs.readFileSync(appJsonPath, 'utf8'));
+        const json = JSON.parse(await fs.promises.readFile(appJsonPath, 'utf8'));
         publisher = json.publisher ?? publisher;
         name = json.name ?? name;
         version = json.version ?? version;
@@ -237,19 +258,27 @@ function loadLocalProject(folderPath: string, appJsonPath: string): AlPackage | 
     const alFiles = collectAlFiles(folderPath);
     logger.debug(`Found ${alFiles.length} local .al file(s) in ${folderPath}`);
 
-    const objects = [];
-    for (const alFile of alFiles) {
-        try {
-            const source = fs.readFileSync(alFile, 'utf8').replace(/^\uFEFF/, '');
-            const obj = parseAlSource(source, alFile);
-            if (obj) {
-                obj.sourceFilePath = alFile;
-                objects.push(obj);
+    const objects: AlObject[] = [];
+    let nextIdx = 0;
+
+    const parseFile = async () => {
+        while (nextIdx < alFiles.length) {
+            const alFile = alFiles[nextIdx++];
+            try {
+                const source = (await fs.promises.readFile(alFile, 'utf8')).replace(/^\uFEFF/, '');
+                const obj = parseAlSource(source, alFile);
+                if (obj) {
+                    obj.sourceFilePath = alFile;
+                    objects.push(obj);
+                }
+            } catch (err) {
+                logger.error(`Cannot read local AL file ${alFile}`, err);
             }
-        } catch (err) {
-            logger.error(`Cannot read local AL file ${alFile}`, err);
         }
-    }
+    };
+
+    const LOCAL_CONCURRENCY = 8;
+    await Promise.all(Array.from({ length: Math.min(LOCAL_CONCURRENCY, alFiles.length) }, parseFile));
 
     const id = `${publisher}_${name}_${version}`.replace(/\s+/g, '_');
     return { id, publisher, name, version, filePath: appJsonPath, objects };
@@ -259,9 +288,9 @@ function loadLocalProject(folderPath: string, appJsonPath: string): AlPackage | 
 // app.json dependency helpers
 // ---------------------------------------------------------------------------
 
-function readAppJsonDependencies(appJsonPath: string): AlAppJsonDependency[] {
+async function readAppJsonDependencies(appJsonPath: string): Promise<AlAppJsonDependency[]> {
     try {
-        const json = JSON.parse(fs.readFileSync(appJsonPath, 'utf8'));
+        const json = JSON.parse(await fs.promises.readFile(appJsonPath, 'utf8'));
         return Array.isArray(json.dependencies) ? json.dependencies : [];
     } catch (err) {
         logger.error(`Cannot parse ${appJsonPath}`, err);

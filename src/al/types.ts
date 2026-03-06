@@ -30,6 +30,7 @@ export type AlObjectType =
     | 'PageExtension'
     | 'Codeunit'
     | 'Report'
+    | 'ReportExtension'
     | 'Query'
     | 'XmlPort'
     | 'Enum'

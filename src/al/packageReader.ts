@@ -13,7 +13,7 @@ import * as logger from './logger';
 export async function readAppManifest(filePath: string): Promise<AlAppManifest | undefined> {
     let rawBuffer: Buffer;
     try {
-        rawBuffer = fs.readFileSync(filePath);
+        rawBuffer = await fs.promises.readFile(filePath);
     } catch (err) {
         logger.error(`Cannot read file ${filePath}`, err);
         return undefined;
@@ -83,12 +83,12 @@ export async function readAppManifest(filePath: string): Promise<AlAppManifest |
  * part of the ZIP stream.  We probe for the PK header and strip any leading
  * garbage before handing the buffer to JSZip.
  */
-export async function readAppFile(filePath: string): Promise<AlPackage | undefined> {
+export async function readAppFile(filePath: string, knownManifest?: AlAppManifest): Promise<AlPackage | undefined> {
     logger.debug(`Reading package: ${filePath}`);
 
     let rawBuffer: Buffer;
     try {
-        rawBuffer = fs.readFileSync(filePath);
+        rawBuffer = await fs.promises.readFile(filePath);
     } catch (err) {
         logger.error(`Cannot read file ${filePath}`, err);
         return undefined;
@@ -111,34 +111,44 @@ export async function readAppFile(filePath: string): Promise<AlPackage | undefin
     }
 
     // ── Determine package identity ──────────────────────────────────────────
-    let publisher = 'Unknown';
-    let name = path.basename(filePath, '.app');
-    let version = '0.0.0.0';
+    let publisher: string;
+    let name: string;
+    let version: string;
 
-    const appJsonFile = zip.file('app.json');
-    if (appJsonFile) {
-        try {
-            const json = JSON.parse(await appJsonFile.async('string'));
-            publisher = json.publisher ?? publisher;
-            name = json.name ?? name;
-            version = json.version ?? version;
-        } catch (err) {
-            logger.error(`Cannot parse app.json in ${filePath}`, err);
-        }
+    if (knownManifest) {
+        // Reuse manifest from Step 2 — skip re-parsing app.json/NavxManifest
+        publisher = knownManifest.publisher;
+        name = knownManifest.name;
+        version = knownManifest.version;
     } else {
-        // Try NavxManifest.xml
-        const manifestFile = zip.file('NavxManifest.xml');
-        if (manifestFile) {
+        publisher = 'Unknown';
+        name = path.basename(filePath, '.app');
+        version = '0.0.0.0';
+
+        const appJsonFile = zip.file('app.json');
+        if (appJsonFile) {
             try {
-                const xml = await manifestFile.async('string');
-                const pubMatch = xml.match(/Publisher\s*=\s*"([^"]+)"/i);
-                const nameMatch = xml.match(/(?:^|<)App[^>]+\s+Name\s*=\s*"([^"]+)"/i);
-                const verMatch = xml.match(/Version\s*=\s*"([^"]+)"/i);
-                if (pubMatch) { publisher = pubMatch[1]; }
-                if (nameMatch) { name = nameMatch[1]; }
-                if (verMatch) { version = verMatch[1]; }
+                const json = JSON.parse(await appJsonFile.async('string'));
+                publisher = json.publisher ?? publisher;
+                name = json.name ?? name;
+                version = json.version ?? version;
             } catch (err) {
-                logger.error(`Cannot parse NavxManifest.xml in ${filePath}`, err);
+                logger.error(`Cannot parse app.json in ${filePath}`, err);
+            }
+        } else {
+            const manifestFile = zip.file('NavxManifest.xml');
+            if (manifestFile) {
+                try {
+                    const xml = await manifestFile.async('string');
+                    const pubMatch = xml.match(/Publisher\s*=\s*"([^"]+)"/i);
+                    const nameMatch = xml.match(/(?:^|<)App[^>]+\s+Name\s*=\s*"([^"]+)"/i);
+                    const verMatch = xml.match(/Version\s*=\s*"([^"]+)"/i);
+                    if (pubMatch) { publisher = pubMatch[1]; }
+                    if (nameMatch) { name = nameMatch[1]; }
+                    if (verMatch) { version = verMatch[1]; }
+                } catch (err) {
+                    logger.error(`Cannot parse NavxManifest.xml in ${filePath}`, err);
+                }
             }
         }
     }
@@ -146,27 +156,26 @@ export async function readAppFile(filePath: string): Promise<AlPackage | undefin
     const packageId = `${publisher}_${name}_${version}`.replace(/\s+/g, '_');
 
     // ── Parse AL source files ────────────────────────────────────────────────
-    const objects: AlObject[] = [];
     const alFiles = Object.values(zip.files).filter(
         f => !f.dir && f.name.toLowerCase().endsWith('.al')
     );
 
-    for (const alFile of alFiles) {
-        let source: string;
-        try {
-            // AL sources can be UTF-8 with or without BOM
-            const buffer = await alFile.async('nodebuffer');
-            source = buffer.toString('utf8').replace(/^\uFEFF/, '');
-        } catch (err) {
-            logger.error(`Cannot read AL file ${alFile.name} in ${filePath}`, err);
-            continue;
-        }
-
-        const obj = parseAlSource(source, alFile.name);
-        if (obj) {
-            objects.push(obj);
-        }
-    }
+    // Decompress and parse all AL files concurrently – decompression is async
+    // (CPU-bound inside JSZip) so overlapping the I/O waits cuts total time
+    // significantly for large packages with hundreds of AL files.
+    const objects: AlObject[] = (await Promise.all(
+        alFiles.map(async alFile => {
+            try {
+                // AL sources can be UTF-8 with or without BOM
+                const buffer = await alFile.async('nodebuffer');
+                const source = buffer.toString('utf8').replace(/^\uFEFF/, '');
+                return parseAlSource(source, alFile.name);
+            } catch (err) {
+                logger.error(`Cannot read AL file ${alFile.name} in ${filePath}`, err);
+                return undefined;
+            }
+        })
+    )).filter((o): o is AlObject => o !== undefined);
 
     logger.debug(`Parsed ${objects.length} objects from ${filePath}`);
 

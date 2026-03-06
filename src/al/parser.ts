@@ -155,11 +155,13 @@ export function parseAlSource(source: string, fileName: string): AlObject | unde
     }
 
     // Run additional plugins
-    for (const plugin of plugins) {
-        try {
-            plugin(source, alObject);
-        } catch (err) {
-            logger.error(`Plugin error while parsing ${fileName}`, err);
+    if (plugins.length > 0) {
+        for (const plugin of plugins) {
+            try {
+                plugin(source, alObject);
+            } catch (err) {
+                logger.error(`Plugin error while parsing ${fileName}`, err);
+            }
         }
     }
 
@@ -170,21 +172,23 @@ export function parseAlSource(source: string, fileName: string): AlObject | unde
 // Helpers
 // ---------------------------------------------------------------------------
 
+const OBJECT_TYPE_MAP: Record<string, AlObjectType> = {
+    table: 'Table',
+    tableextension: 'TableExtension',
+    page: 'Page',
+    pageextension: 'PageExtension',
+    codeunit: 'Codeunit',
+    report: 'Report',
+    reportextension: 'ReportExtension',
+    query: 'Query',
+    xmlport: 'XmlPort',
+    enum: 'Enum',
+    enumextension: 'EnumExtension',
+    interface: 'Interface',
+    permissionset: 'PermissionSet',
+    permissionsetextension: 'PermissionSetExtension',
+};
+
 function mapObjectType(raw: string): AlObjectType {
-    const map: Record<string, AlObjectType> = {
-        table: 'Table',
-        tableextension: 'TableExtension',
-        page: 'Page',
-        pageextension: 'PageExtension',
-        codeunit: 'Codeunit',
-        report: 'Report',
-        query: 'Query',
-        xmlport: 'XmlPort',
-        enum: 'Enum',
-        enumextension: 'EnumExtension',
-        interface: 'Interface',
-        permissionset: 'PermissionSet',
-        permissionsetextension: 'PermissionSetExtension',
-    };
-    return map[raw] ?? 'Unknown';
+    return OBJECT_TYPE_MAP[raw] ?? 'Unknown';
 }
