@@ -2,8 +2,31 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import { reloadAllPackages } from './al/packageStore';
-import { searchEventSubscriberCommand } from './al/commands';
 import { getOutputChannel, log } from './al/logger';
+import { readAlFileFromPackage } from './al/packageReader';
+import { registerAllPluginCommands } from './al/plugins';
+
+// ---------------------------------------------------------------------------
+// Virtual document provider for .al files inside .app packages
+// ---------------------------------------------------------------------------
+
+/**
+ * Serves read-only AL source content extracted on-demand from a .app ZIP.
+ *
+ * URI format:  al-companion-app:/<zipEntryName>?path=<encodeURIComponent(appFilePath)>
+ *
+ * The URI path (minus the leading "/") is the entry name inside the ZIP.
+ * VS Code derives the tab title from the last path segment (the .al filename)
+ * and picks up the AL language via the ".al" extension.
+ */
+class AlAppContentProvider implements vscode.TextDocumentContentProvider {
+    async provideTextDocumentContent(uri: vscode.Uri): Promise<string> {
+        const pkgPath = new URLSearchParams(uri.query).get('path');
+        if (!pkgPath) { return ''; }
+        const entryName = uri.path.slice(1); // strip leading '/'
+        return (await readAlFileFromPackage(pkgPath, entryName)) ?? '';
+    }
+}
 
 export function activate(context: vscode.ExtensionContext): void {
 	// Ensure the output channel is created and shown on first activation
@@ -11,17 +34,15 @@ export function activate(context: vscode.ExtensionContext): void {
 	log('AL Companion activated.');
 
 	context.subscriptions.push(
+		vscode.workspace.registerTextDocumentContentProvider('al-companion-app', new AlAppContentProvider())
+	);
+
+	registerAllPluginCommands(context);
+
+	context.subscriptions.push(
 		vscode.commands.registerCommand('al-companion.reloadPackages', () => {
 			reloadAllPackages().catch(err => {
 				vscode.window.showErrorMessage(`Failed to load packages — ${err}`);
-			});
-		})
-	);
-
-	context.subscriptions.push(
-		vscode.commands.registerCommand('al-companion.searchEventSubscriber', () => {
-			searchEventSubscriberCommand().catch(err => {
-				vscode.window.showErrorMessage(`Search error — ${err}`);
 			});
 		})
 	);

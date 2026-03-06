@@ -1,4 +1,4 @@
-import { AlObject, AlFunction, AlEventSubscriber, AlObjectType } from './types';
+import { AlObject, AlFunction, AlObjectType } from './types';
 import * as logger from './logger';
 
 /**
@@ -40,25 +40,6 @@ const OBJECT_HEADER_RE =
 const ATTRIBUTE_RE = /^\s*\[(.+)\]\s*$/;
 const PROCEDURE_RE =
     /^\s*(local\s+|internal\s+)*(procedure|trigger)\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/i;
-
-// ---------------------------------------------------------------------------
-// Event-subscriber attribute regex
-// ---------------------------------------------------------------------------
-
-// Supported formats:
-// [EventSubscriber(ObjectType::Codeunit, Codeunit::"Sales-Post", 'OnBeforePost', '', true, true)]
-// [EventSubscriber(ObjectType::Table, Database::"Sales Header", OnAfterInsertEvent, 'No.', false, false)]
-// [EventSubscriber(ObjectType::Codeunit, Codeunit::50100, OnAfterMethod, '', false, false)]
-// [EventSubscriber(ObjectType::Codeunit, 50100, OnAfterMethod, '', false, false)]
-//
-// Groups:
-//   1 – publisher object type  (e.g. "Codeunit", "Table")
-//   2 – publisher name quoted  (e.g. "Sales-Post", "Sales Header")  – or undefined
-//   3 – publisher name/id unquoted (e.g. "MyCodeunit", "50100")    – or undefined
-//   4 – event name             (with or without surrounding single quotes)
-//   5 – element name           (content of the 4th argument's single quotes, may be empty)
-const EVENT_SUB_RE =
-    /EventSubscriber\s*\(\s*ObjectType\s*::\s*(\w+)\s*,\s*(?:\w+\s*::\s*)?(?:"([^"]+)"|(\d+|[\w][\w.-]*)?)\s*,\s*'?([A-Za-z_][A-Za-z0-9_]*)'?\s*,\s*'([^']*)'/i;
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -127,23 +108,6 @@ export function parseAlSource(source: string, fileName: string): AlObject | unde
                 isInternal: modifiers.includes('internal'),
             };
             alObject.functions.push(fn);
-
-            // Check whether any pending attribute is an EventSubscriber
-            for (const attr of pendingAttributes) {
-                const evMatch = attr.match(EVENT_SUB_RE);
-                if (evMatch) {
-                    const sub: AlEventSubscriber = {
-                        fn,
-                        publisherObjectType: evMatch[1],
-                        // group 2 = quoted name, group 3 = unquoted name or numeric id
-                        publisherObjectName: (evMatch[2] ?? evMatch[3] ?? '').trim(),
-                        eventName: evMatch[4],
-                        elementName: evMatch[5],
-                    };
-                    alObject.eventSubscribers.push(sub);
-                }
-            }
-
             pendingAttributes.length = 0;
             continue;
         }

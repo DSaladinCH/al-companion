@@ -78,6 +78,8 @@ export interface AlObject {
     eventSubscribers: AlEventSubscriber[];
     /** Absolute path of the .al source file – only set for local workspace objects. */
     sourceFilePath?: string;
+    /** Path of the .al entry inside the .app ZIP – only set for package objects. */
+    zipEntryName?: string;
     /** Arbitrary extra data added by additional parsers. */
     extra: Record<string, unknown>;
 }

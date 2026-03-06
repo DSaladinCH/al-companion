@@ -169,7 +169,9 @@ export async function readAppFile(filePath: string, knownManifest?: AlAppManifes
                 // AL sources can be UTF-8 with or without BOM
                 const buffer = await alFile.async('nodebuffer');
                 const source = buffer.toString('utf8').replace(/^\uFEFF/, '');
-                return parseAlSource(source, alFile.name);
+                const obj = parseAlSource(source, alFile.name);
+                if (obj) { obj.zipEntryName = alFile.name; }
+                return obj;
             } catch (err) {
                 logger.error(`Cannot read AL file ${alFile.name} in ${filePath}`, err);
                 return undefined;
@@ -187,6 +189,48 @@ export async function readAppFile(filePath: string, knownManifest?: AlAppManifes
         filePath,
         objects,
     };
+}
+
+/**
+ * Extract a single .al source file from a .app package ZIP by its entry name.
+ * Used by the virtual document provider to show package source on demand.
+ */
+export async function readAlFileFromPackage(pkgFilePath: string, entryName: string): Promise<string | undefined> {
+    let rawBuffer: Buffer;
+    try {
+        rawBuffer = await fs.promises.readFile(pkgFilePath);
+    } catch (err) {
+        logger.error(`Cannot read file ${pkgFilePath}`, err);
+        return undefined;
+    }
+
+    const zipBuffer = findZipStart(rawBuffer);
+    if (!zipBuffer) {
+        logger.error(`No ZIP signature found in ${pkgFilePath}`);
+        return undefined;
+    }
+
+    let zip: JSZip;
+    try {
+        zip = await JSZip.loadAsync(zipBuffer);
+    } catch (err) {
+        logger.error(`Cannot parse ZIP in ${pkgFilePath}`, err);
+        return undefined;
+    }
+
+    const entry = zip.file(entryName);
+    if (!entry) {
+        logger.error(`Entry not found in ZIP: ${entryName} (${pkgFilePath})`);
+        return undefined;
+    }
+
+    try {
+        const buffer = await entry.async('nodebuffer');
+        return buffer.toString('utf8').replace(/^\uFEFF/, '');
+    } catch (err) {
+        logger.error(`Cannot extract ${entryName} from ${pkgFilePath}`, err);
+        return undefined;
+    }
 }
 
 /**
