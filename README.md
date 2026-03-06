@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/DSaladinCH/al-companion/main/logo.png" alt="AL Companion" width="140" />
+  <img src="https://raw.githubusercontent.com/DSaladinCH/al-companion/refs/heads/main/logo.png" alt="AL Companion" width="140" />
 </p>
 
 <h1 align="center">AL Companion</h1>
