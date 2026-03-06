@@ -1,13 +1,43 @@
 {
 	"name": "al-companion",
+	"publisher": "DSaladin",
 	"displayName": "AL Companion",
 	"description": "Companion extension for working with Microsoft AL / Business Central",
+	"author": {
+		"email": "support@dsaladin.dev",
+		"name": "Dominic Saladin"
+	},
+	"license": "MIT",
 	"version": "0.0.1",
 	"engines": {
 		"vscode": "^1.109.0"
 	},
 	"categories": [
 		"Other"
+	],
+	"repository": {
+        "type": "git",
+        "url": "https://github.com/DSaladinCH/al-companion.git"
+    },
+    "bugs": {
+        "url": "https://github.com/DSaladinCH/al-companion/issues",
+        "email": "support@dsaladin.dev"
+    },
+    "funding": [
+        {
+            "type": "Buy Me a Coffee",
+            "url": "https://www.buymeacoffee.com/dsaladin"
+        }
+    ],
+    "galleryBanner": {
+        "color": "#62a9ff",
+        "theme": "dark"
+    },
+	"keywords": [
+		"AL",
+		"Business Central",
+		"Microsoft Dynamics 365",
+		"Extension Development"
 	],
 	"activationEvents": [
 		"workspaceContains:app.json"
