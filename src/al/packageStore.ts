@@ -1,8 +1,9 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import { AlPackage } from './types';
-import { readAppFile } from './packageReader';
+import { AlPackage, AlAppJsonDependency, AlAppManifest } from './types';
+import { readAppFile, readAppManifest } from './packageReader';
+import { parseAlSource } from './parser';
 import * as logger from './logger';
 
 /**
@@ -29,11 +30,13 @@ export function clear(): void {
 
 /**
  * Scan all open workspace folders for AL projects and load their dependency
- * packages from the .alpackages directories.
+ * packages from the package cache directories.
  *
- * Skips workspace folders that do not contain an app.json (i.e. are not AL
- * projects).  Non-existent .alpackages directories are silently ignored so
- * that partial / non-AL workspaces don't produce errors.
+ * Only packages that are declared as dependencies in an app.json are loaded.
+ * When multiple versions of the same package exist in the cache, the highest
+ * version that satisfies the minimum version requirement is chosen.
+ * When multiple projects declare the same dependency, a single package file
+ * is loaded (the latest version satisfying the highest minimum required).
  */
 export async function reloadAllPackages(): Promise<void> {
     store.clear();
@@ -44,8 +47,12 @@ export async function reloadAllPackages(): Promise<void> {
         return;
     }
 
-    // Collect .app file paths from every AL project workspace folder
-    const appFiles: string[] = [];
+    // ── Step 1: Collect all declared dependencies and package cache dirs ────
+    // Keyed by "publisher|name" (lower-cased) → highest minimum version seen
+    const requiredDeps = new Map<string, AlAppJsonDependency>();
+    // All candidate .app file paths across every workspace folder's cache dir
+    const candidateFiles: string[] = [];
+
     for (const folder of folders) {
         const folderPath = folder.uri.fsPath;
         const appJsonPath = path.join(folderPath, 'app.json');
@@ -54,65 +61,291 @@ export async function reloadAllPackages(): Promise<void> {
             continue;
         }
 
-        const packageDir = path.join(folderPath, '.alpackages');
+        // Read declared dependencies
+        const deps = readAppJsonDependencies(appJsonPath);
+        logger.debug(`${deps.length} dependencies declared in ${appJsonPath}`);
+        for (const dep of deps) {
+            const key = depKey(dep);
+            const existing = requiredDeps.get(key);
+            // Keep the highest minimum version across all projects
+            if (!existing || compareVersionStrings(dep.version, existing.version) > 0) {
+                requiredDeps.set(key, dep);
+            }
+        }
+
+        // Resolve package cache directory
+        const packageCachePath = vscode.workspace
+            .getConfiguration('al', folder.uri)
+            .get<string>('packageCachePath');
+
+        let packageDir: string;
+        if (packageCachePath) {
+            packageDir = path.isAbsolute(packageCachePath)
+                ? packageCachePath
+                : path.join(folderPath, packageCachePath);
+            logger.debug(`Using al.packageCachePath: ${packageDir}`);
+        } else {
+            packageDir = path.join(folderPath, '.alpackages');
+        }
+
         if (!fs.existsSync(packageDir)) {
-            logger.debug(`No .alpackages directory in ${folderPath}`);
+            logger.debug(`No package cache directory found at ${packageDir}`);
             continue;
         }
 
-        const found = collectAppFiles(packageDir);
-        logger.log(`Found ${found.length} package(s) in ${packageDir}`);
-        appFiles.push(...found);
+        candidateFiles.push(...collectAppFiles(packageDir));
     }
 
-    if (appFiles.length === 0) {
+    if (candidateFiles.length === 0) {
         logger.log('No .app packages found in any AL workspace folder.');
-        vscode.window.showInformationMessage('AL Companion: No packages found.');
-        return;
     }
 
-    // Parse with a progress notification
-    await vscode.window.withProgress(
-        {
-            location: vscode.ProgressLocation.Notification,
-            title: 'AL Companion: Loading packages',
-            cancellable: false,
-        },
-        async (progress) => {
-            const total = appFiles.length;
-            let done = 0;
+    logger.log(`Resolving ${requiredDeps.size} declared dependency(s) from ${candidateFiles.length} candidate file(s).`);
 
-            for (const appFile of appFiles) {
-                const label = path.basename(appFile);
-                progress.report({
-                    message: label,
-                    increment: 0,
-                });
-
-                const pkg = await readAppFile(appFile);
-                if (pkg) {
-                    store.set(pkg.id, pkg);
-                    logger.debug(`Loaded package: ${pkg.publisher} - ${pkg.name} ${pkg.version} (${pkg.objects.length} objects)`);
-                }
-
-                done++;
-                progress.report({
-                    message: label,
-                    increment: (1 / total) * 100,
-                });
+    // ── Step 2: Read manifests of all candidates and select best matches ────
+    const manifests: AlAppManifest[] = [];
+    for (const filePath of candidateFiles) {
+        // Fast path: try to resolve identity from the filename alone
+        const fromName = parseAppFilename(filePath);
+        if (fromName) {
+            manifests.push(fromName);
+        } else {
+            // Filename doesn't follow Publisher_Name_Version.app convention –
+            // fall back to reading the manifest from inside the ZIP.
+            logger.debug(`Non-standard filename, reading manifest from ZIP: ${filePath}`);
+            const manifest = await readAppManifest(filePath);
+            if (manifest) {
+                manifests.push(manifest);
             }
-
-            logger.log(`Loaded ${store.size} package(s) with ${totalObjects()} object(s).`);
         }
-    );
+    }
+
+    // Group all manifests by "publisher|name" so we can deduplicate versions.
+    const manifestsByKey = new Map<string, AlAppManifest[]>();
+    for (const m of manifests) {
+        const key = depKey(m);
+        if (!manifestsByKey.has(key)) {
+            manifestsByKey.set(key, []);
+        }
+        manifestsByKey.get(key)!.push(m);
+    }
+
+    // For each unique package found in the cache, pick the best version:
+    //   - If the package is an explicit dependency in app.json → take the
+    //     highest version that is >= the declared minimum.
+    //   - If the package is one of the always-included Microsoft platform
+    //     packages → take the highest available version.
+    //   - Otherwise skip it entirely.
+    const selectedFiles: string[] = [];
+    for (const [key, candidates] of manifestsByKey) {
+        const dep = requiredDeps.get(key);
+        let eligible: AlAppManifest[];
+        let reason: string;
+
+        if (dep) {
+            const minVer = parseVersion(dep.version);
+            eligible = candidates.filter(c => compareVersions(parseVersion(c.version), minVer) >= 0);
+            if (eligible.length === 0) {
+                logger.log(`No suitable package found for dependency: ${dep.publisher} - ${dep.name} >= ${dep.version}`);
+                continue;
+            }
+            reason = `dependency >= ${dep.version}`;
+        } else if (isMicrosoftPlatformPackage(candidates[0])) {
+            eligible = candidates;
+            reason = 'Microsoft platform package (always included)';
+        } else {
+            logger.debug(`Skipping unlisted package: ${candidates[0].publisher} - ${candidates[0].name}`);
+            continue;
+        }
+
+        eligible.sort((a, b) => compareVersions(parseVersion(b.version), parseVersion(a.version)));
+        const best = eligible[0];
+        logger.log(`Selected ${best.publisher} - ${best.name} ${best.version} (${reason})`);
+        selectedFiles.push(best.filePath);
+    }
+
+    // ── Step 3: Fully parse and load the selected .app files ────────────────
+    if (selectedFiles.length > 0) {
+        await vscode.window.withProgress(
+            {
+                location: vscode.ProgressLocation.Notification,
+                title: 'Loading packages',
+                cancellable: false,
+            },
+            async (progress) => {
+                const total = selectedFiles.length;
+
+                for (const appFile of selectedFiles) {
+                    const label = path.basename(appFile);
+                    progress.report({ message: label, increment: 0 });
+
+                    const pkg = await readAppFile(appFile);
+                    if (pkg) {
+                        store.set(pkg.id, pkg);
+                        logger.debug(`Loaded package: ${pkg.publisher} - ${pkg.name} ${pkg.version} (${pkg.objects.length} objects)`);
+                    }
+
+                    progress.report({ message: label, increment: (1 / total) * 100 });
+                }
+            }
+        );
+    } else {
+        logger.log('No .app packages matched the dependency/platform filter.');
+    }
+
+    // ── Step 4: Parse local workspace projects as packages ─────────────────
+    for (const folder of folders) {
+        const folderPath = folder.uri.fsPath;
+        const appJsonPath = path.join(folderPath, 'app.json');
+        if (!fs.existsSync(appJsonPath)) { continue; }
+
+        const localPkg = loadLocalProject(folderPath, appJsonPath);
+        if (localPkg) {
+            store.set(localPkg.id, localPkg);
+            logger.log(`Loaded local project: ${localPkg.publisher} - ${localPkg.name} ${localPkg.version} (${localPkg.objects.length} objects)`);
+        }
+    }
 
     vscode.window.showInformationMessage(
-        `AL Companion: Loaded ${store.size} package(s).`
+        `Loaded ${store.size} package(s) with ${totalObjects()} object(s).`
     );
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Local project parsing
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse all .al source files in a workspace folder and return them as an
+ * AlPackage, using the project's app.json for identity metadata.
+ */
+function loadLocalProject(folderPath: string, appJsonPath: string): AlPackage | undefined {
+    let publisher = 'Unknown';
+    let name = path.basename(folderPath);
+    let version = '0.0.0.0';
+
+    try {
+        const json = JSON.parse(fs.readFileSync(appJsonPath, 'utf8'));
+        publisher = json.publisher ?? publisher;
+        name = json.name ?? name;
+        version = json.version ?? version;
+    } catch (err) {
+        logger.error(`Cannot parse ${appJsonPath}`, err);
+        return undefined;
+    }
+
+    const alFiles = collectAlFiles(folderPath);
+    logger.debug(`Found ${alFiles.length} local .al file(s) in ${folderPath}`);
+
+    const objects = [];
+    for (const alFile of alFiles) {
+        try {
+            const source = fs.readFileSync(alFile, 'utf8').replace(/^\uFEFF/, '');
+            const obj = parseAlSource(source, alFile);
+            if (obj) {
+                obj.sourceFilePath = alFile;
+                objects.push(obj);
+            }
+        } catch (err) {
+            logger.error(`Cannot read local AL file ${alFile}`, err);
+        }
+    }
+
+    const id = `${publisher}_${name}_${version}`.replace(/\s+/g, '_');
+    return { id, publisher, name, version, filePath: appJsonPath, objects };
+}
+
+// ---------------------------------------------------------------------------
+// app.json dependency helpers
+// ---------------------------------------------------------------------------
+
+function readAppJsonDependencies(appJsonPath: string): AlAppJsonDependency[] {
+    try {
+        const json = JSON.parse(fs.readFileSync(appJsonPath, 'utf8'));
+        return Array.isArray(json.dependencies) ? json.dependencies : [];
+    } catch (err) {
+        logger.error(`Cannot parse ${appJsonPath}`, err);
+        return [];
+    }
+}
+
+/** Normalised lookup key for a dependency or manifest: "publisher|name" */
+function depKey(d: { publisher: string; name: string }): string {
+    return `${d.publisher.toLowerCase()}|${d.name.toLowerCase()}`;
+}
+
+/**
+ * Returns true for core Microsoft platform packages that should always be
+ * loaded even when not explicitly listed in app.json.
+ */
+const MICROSOFT_PLATFORM_PACKAGES = new Set([
+    'system',
+    'system application',
+    'base application',
+    'application',
+]);
+
+function isMicrosoftPlatformPackage(m: AlAppManifest): boolean {
+    return m.publisher.toLowerCase() === 'microsoft' &&
+        MICROSOFT_PLATFORM_PACKAGES.has(m.name.toLowerCase());
+}
+
+// ---------------------------------------------------------------------------
+// Filename-based manifest parsing
+// ---------------------------------------------------------------------------
+
+/**
+ * Try to extract publisher / name / version from the .app filename.
+ *
+ * AL package filenames follow the convention:
+ *   Publisher_AppName_W.X.Y.Z.app
+ *
+ * The publisher is everything before the first underscore; the name is
+ * everything between the first underscore and the last version-pattern
+ * segment; spaces are preserved.
+ *
+ * Returns undefined when the filename cannot be parsed (non-standard names).
+ */
+function parseAppFilename(filePath: string): AlAppManifest | undefined {
+    const base = path.basename(filePath, '.app');
+    // Anchor on version at the end: Publisher_Name_W.X.Y.Z
+    const match = base.match(/^(.+?)_(.+)_(\d+\.\d+\.\d+\.\d+)$/);
+    if (!match) {
+        return undefined;
+    }
+    return {
+        id: undefined,
+        publisher: match[1],
+        name: match[2],
+        version: match[3],
+        filePath,
+    };
+}
+
+// ---------------------------------------------------------------------------
+// Version helpers
+// ---------------------------------------------------------------------------
+
+type Version = [number, number, number, number];
+
+function parseVersion(v: string): Version {
+    const parts = v.split('.').map(Number);
+    return [parts[0] ?? 0, parts[1] ?? 0, parts[2] ?? 0, parts[3] ?? 0];
+}
+
+function compareVersions(a: Version, b: Version): number {
+    for (let i = 0; i < 4; i++) {
+        if (a[i] !== b[i]) { return a[i] - b[i]; }
+    }
+    return 0;
+}
+
+function compareVersionStrings(a: string, b: string): number {
+    return compareVersions(parseVersion(a), parseVersion(b));
+}
+
+// ---------------------------------------------------------------------------
+// File system helpers
 // ---------------------------------------------------------------------------
 
 function collectAppFiles(dir: string): string[] {
@@ -123,6 +356,26 @@ function collectAppFiles(dir: string): string[] {
             if (entry.isDirectory()) {
                 results.push(...collectAppFiles(full));
             } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.app')) {
+                results.push(full);
+            }
+        }
+    } catch (err) {
+        logger.error(`Cannot read directory ${dir}`, err);
+    }
+    return results;
+}
+
+/** Recursively collect all .al source files, skipping hidden dirs and .alpackages. */
+function collectAlFiles(dir: string): string[] {
+    const SKIP_DIRS = new Set(['.alpackages', '.git', '.vs', 'node_modules', 'out', '.output']);
+    const results: string[] = [];
+    try {
+        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+            if (entry.name.startsWith('.') || SKIP_DIRS.has(entry.name.toLowerCase())) { continue; }
+            const full = path.join(dir, entry.name);
+            if (entry.isDirectory()) {
+                results.push(...collectAlFiles(full));
+            } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.al')) {
                 results.push(full);
             }
         }

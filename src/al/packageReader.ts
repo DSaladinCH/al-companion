@@ -1,9 +1,75 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import JSZip from 'jszip';
-import { AlPackage, AlObject } from './types';
+import { AlPackage, AlObject, AlAppManifest } from './types';
 import { parseAlSource } from './parser';
 import * as logger from './logger';
+
+/**
+ * Read only the manifest metadata (publisher, name, version, id) from a .app
+ * file without parsing any AL source.  Used for fast pre-filtering before
+ * deciding which packages to fully load.
+ */
+export async function readAppManifest(filePath: string): Promise<AlAppManifest | undefined> {
+    let rawBuffer: Buffer;
+    try {
+        rawBuffer = fs.readFileSync(filePath);
+    } catch (err) {
+        logger.error(`Cannot read file ${filePath}`, err);
+        return undefined;
+    }
+
+    const zipBuffer = findZipStart(rawBuffer);
+    if (!zipBuffer) {
+        logger.error(`No ZIP signature found in ${filePath}`);
+        return undefined;
+    }
+
+    let zip: JSZip;
+    try {
+        zip = await JSZip.loadAsync(zipBuffer);
+    } catch (err) {
+        logger.error(`Cannot parse ZIP in ${filePath}`, err);
+        return undefined;
+    }
+
+    let publisher = 'Unknown';
+    let name = path.basename(filePath, '.app');
+    let version = '0.0.0.0';
+    let id: string | undefined;
+
+    const appJsonFile = zip.file('app.json');
+    if (appJsonFile) {
+        try {
+            const json = JSON.parse(await appJsonFile.async('string'));
+            publisher = json.publisher ?? publisher;
+            name = json.name ?? name;
+            version = json.version ?? version;
+            id = json.id;
+        } catch (err) {
+            logger.error(`Cannot parse app.json in ${filePath}`, err);
+        }
+    } else {
+        const manifestFile = zip.file('NavxManifest.xml');
+        if (manifestFile) {
+            try {
+                const xml = await manifestFile.async('string');
+                const pubMatch = xml.match(/Publisher\s*=\s*"([^"]+)"/i);
+                const nameMatch = xml.match(/(?:^|<)App[^>]+\s+Name\s*=\s*"([^"]+)"/i);
+                const verMatch = xml.match(/Version\s*=\s*"([^"]+)"/i);
+                const idMatch = xml.match(/Id\s*=\s*"([^"]+)"/i);
+                if (pubMatch) { publisher = pubMatch[1]; }
+                if (nameMatch) { name = nameMatch[1]; }
+                if (verMatch) { version = verMatch[1]; }
+                if (idMatch) { id = idMatch[1]; }
+            } catch (err) {
+                logger.error(`Cannot parse NavxManifest.xml in ${filePath}`, err);
+            }
+        }
+    }
+
+    return { id, publisher, name, version, filePath };
+}
 
 /**
  * Read a single .app file and return its parsed AlPackage, or undefined on error.

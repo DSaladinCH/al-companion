@@ -3,6 +3,26 @@
  * The model is intentionally open so additional parsers can extend it later.
  */
 
+/** Manifest identity read from inside a .app ZIP (fast, no AL source parsing). */
+export interface AlAppManifest {
+    /** GUID as declared in app.json / NavxManifest.xml – may be undefined for very old packages. */
+    id: string | undefined;
+    publisher: string;
+    name: string;
+    version: string;
+    filePath: string;
+}
+
+/** A single entry from the `dependencies` array in a project's app.json. */
+export interface AlAppJsonDependency {
+    /** GUID of the dependency. */
+    id?: string;
+    publisher: string;
+    name: string;
+    /** Minimum required version, e.g. "20.0.0.0". */
+    version: string;
+}
+
 export type AlObjectType =
     | 'Table'
     | 'TableExtension'
@@ -55,6 +75,8 @@ export interface AlObject {
     extendsName?: string;
     functions: AlFunction[];
     eventSubscribers: AlEventSubscriber[];
+    /** Absolute path of the .al source file – only set for local workspace objects. */
+    sourceFilePath?: string;
     /** Arbitrary extra data added by additional parsers. */
     extra: Record<string, unknown>;
 }

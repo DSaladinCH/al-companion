@@ -23,10 +23,12 @@ export function registerPlugin(plugin: AlParserPlugin): void {
 // ---------------------------------------------------------------------------
 
 // Matches:  table 50100 "My Table"
+//           table 50100 "My Table" {
 //           tableextension 50200 "My Ext" extends "My Table"
 //           codeunit 50300 MyCU
+// The opening brace is optional – it may appear on the next line in AL source.
 const OBJECT_HEADER_RE =
-    /^\s*(table|tableextension|page|pageextension|codeunit|report|query|xmlport|enum|enumextension|interface|permissionset|permissionsetextension)\s+(\d+)\s+"?([^"\r\n{]+?)"?\s*(?:extends\s+"?([^"\r\n{]+?)"?)?\s*[{$]/i;
+    /^\s*(table|tableextension|page|pageextension|codeunit|report|query|xmlport|enum|enumextension|interface|permissionset|permissionsetextension)\s+(\d+)\s+"?([^"\r\n{]+?)"?\s*(?:extends\s+"?([^"\r\n{]+?)"?)?\s*(?:\{|$)/i;
 
 // ---------------------------------------------------------------------------
 // Procedure / trigger regex
@@ -43,10 +45,20 @@ const PROCEDURE_RE =
 // Event-subscriber attribute regex
 // ---------------------------------------------------------------------------
 
+// Supported formats:
 // [EventSubscriber(ObjectType::Codeunit, Codeunit::"Sales-Post", 'OnBeforePost', '', true, true)]
 // [EventSubscriber(ObjectType::Table, Database::"Sales Header", OnAfterInsertEvent, 'No.', false, false)]
+// [EventSubscriber(ObjectType::Codeunit, Codeunit::50100, OnAfterMethod, '', false, false)]
+// [EventSubscriber(ObjectType::Codeunit, 50100, OnAfterMethod, '', false, false)]
+//
+// Groups:
+//   1 – publisher object type  (e.g. "Codeunit", "Table")
+//   2 – publisher name quoted  (e.g. "Sales-Post", "Sales Header")  – or undefined
+//   3 – publisher name/id unquoted (e.g. "MyCodeunit", "50100")    – or undefined
+//   4 – event name             (with or without surrounding single quotes)
+//   5 – element name           (content of the 4th argument's single quotes, may be empty)
 const EVENT_SUB_RE =
-    /EventSubscriber\s*\(\s*ObjectType\s*::\s*(\w+)\s*,\s*(?:\w+\s*::\s*)?"?([^,",]+?)"?\s*,\s*'?([A-Za-z_][A-Za-z0-9_]*)'?\s*,\s*'([^']*)'/i;
+    /EventSubscriber\s*\(\s*ObjectType\s*::\s*(\w+)\s*,\s*(?:\w+\s*::\s*)?(?:"([^"]+)"|(\d+|[\w][\w.-]*)?)\s*,\s*'?([A-Za-z_][A-Za-z0-9_]*)'?\s*,\s*'([^']*)'/i;
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -123,9 +135,10 @@ export function parseAlSource(source: string, fileName: string): AlObject | unde
                     const sub: AlEventSubscriber = {
                         fn,
                         publisherObjectType: evMatch[1],
-                        publisherObjectName: evMatch[2].trim(),
-                        eventName: evMatch[3],
-                        elementName: evMatch[4],
+                        // group 2 = quoted name, group 3 = unquoted name or numeric id
+                        publisherObjectName: (evMatch[2] ?? evMatch[3] ?? '').trim(),
+                        eventName: evMatch[4],
+                        elementName: evMatch[5],
                     };
                     alObject.eventSubscribers.push(sub);
                 }
