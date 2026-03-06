@@ -8,31 +8,33 @@
 		"name": "Dominic Saladin"
 	},
 	"license": "MIT",
-	"version": "0.0.1",
+	"version": "0.1.0",
+    "icon": "logo_small.png",
 	"engines": {
 		"vscode": "^1.109.0"
 	},
 	"categories": [
-		"Other"
+		"Other",
+		"Programming Languages"
 	],
 	"repository": {
-        "type": "git",
-        "url": "https://github.com/DSaladinCH/al-companion.git"
-    },
-    "bugs": {
-        "url": "https://github.com/DSaladinCH/al-companion/issues",
-        "email": "support@dsaladin.dev"
-    },
-    "funding": [
-        {
-            "type": "Buy Me a Coffee",
-            "url": "https://www.buymeacoffee.com/dsaladin"
-        }
-    ],
-    "galleryBanner": {
-        "color": "#62a9ff",
-        "theme": "dark"
-    },
+		"type": "git",
+		"url": "https://github.com/DSaladinCH/al-companion.git"
+	},
+	"bugs": {
+		"url": "https://github.com/DSaladinCH/al-companion/issues",
+		"email": "support@dsaladin.dev"
+	},
+	"funding": [
+		{
+			"type": "Buy Me a Coffee",
+			"url": "https://www.buymeacoffee.com/dsaladin"
+		}
+	],
+	"galleryBanner": {
+		"color": "#62a9ff",
+		"theme": "dark"
+	},
 	"keywords": [
 		"AL",
 		"Business Central",
@@ -71,7 +73,9 @@
 		"watch": "tsc -watch -p ./",
 		"pretest": "npm run compile && npm run lint",
 		"lint": "eslint src",
-		"test": "vscode-test"
+		"test": "vscode-test",
+		"package": "vsce package",
+		"publish": "vsce publish"
 	},
 	"devDependencies": {
 		"@types/jszip": "^3.4.0",
@@ -80,6 +84,7 @@
 		"@types/vscode": "^1.109.0",
 		"@vscode/test-cli": "^0.0.12",
 		"@vscode/test-electron": "^2.5.2",
+		"@vscode/vsce": "^3.7.1",
 		"eslint": "^9.39.3",
 		"typescript": "^5.9.3",
 		"typescript-eslint": "^8.56.1"

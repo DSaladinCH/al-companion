@@ -1,71 +1,73 @@
-# al-companion README
+<p align="center">
+  <img src="https://raw.githubusercontent.com/DSaladinCH/al-companion/main/logo.png" alt="AL Companion" width="140" />
+</p>
 
-This is the README for your extension "al-companion". After writing up a brief description, we recommend including the following sections.
+<h1 align="center">AL Companion</h1>
 
-## Features
+<p align="center">
+  Navigate and explore Microsoft AL / Business Central packages right inside VS Code.
+</p>
 
-Describe specific features of your extension including screenshots of your extension in action. Image paths are relative to this README file.
-
-For example if there is an image subfolder under your extension project workspace:
-
-\!\[feature X\]\(images/feature-x.png\)
-
-> Tip: Many popular extensions utilize animations. This is an excellent way to show off your extension! We recommend short, focused animations that are easy to follow.
-
-## Requirements
-
-If you have any requirements or dependencies, add a section describing those and how to install and configure them.
-
-## Extension Settings
-
-Include if your extension adds any VS Code settings through the `contributes.configuration` extension point.
-
-For example:
-
-This extension contributes the following settings:
-
-* `myExtension.enable`: Enable/disable this extension.
-* `myExtension.thing`: Set to `blah` to do something.
-
-## Known Issues
-
-Calling out known issues can help limit users opening duplicate issues against your extension.
-
-## Release Notes
-
-Users appreciate release notes as you update your extension.
-
-### 1.0.0
-
-Initial release of ...
-
-### 1.0.1
-
-Fixed issue #.
-
-### 1.1.0
-
-Added features X, Y, and Z.
+<p align="center">
+  <a href="https://github.com/DSaladinCH/al-companion/blob/main/LICENSE">
+    <img src="https://img.shields.io/github/license/DSaladinCH/al-companion?style=for-the-badge" alt="License" />
+  </a>
+  <a href="https://marketplace.visualstudio.com/items?itemName=DSaladin.al-companion">
+    <img src="https://img.shields.io/visual-studio-marketplace/v/DSaladin.al-companion?label=Version&style=for-the-badge" alt="Marketplace Version" />
+  </a>
+  <a href="https://marketplace.visualstudio.com/items?itemName=DSaladin.al-companion">
+    <img src="https://img.shields.io/visual-studio-marketplace/d/DSaladin.al-companion?color=darkgreen&label=Downloads&style=for-the-badge" alt="Marketplace Downloads" />
+  </a>
+</p>
 
 ---
 
-## Following extension guidelines
+## Features
 
-Ensure that you've read through the extensions guidelines and follow the best practices for creating your extension.
+### ⚡ Automatic Package Loading
 
-* [Extension Guidelines](https://code.visualstudio.com/api/references/extension-guidelines)
+AL Companion automatically loads your dependency packages when you open an AL project (any workspace containing an `app.json`). It respects:
 
-## Working with Markdown
+- The `al.packageCachePath` workspace setting — uses your custom cache directory if configured, otherwise falls back to `.alpackages`
+- Your `app.json` dependency list — only loads packages you actually depend on (plus the Microsoft platform packages: System, System Application, Base Application, Application)
+- Version constraints — when multiple versions of a package exist in the cache, the highest version satisfying your minimum requirement is selected
 
-You can author your README using Visual Studio Code. Here are some useful editor keyboard shortcuts:
+### 🔍 Search Event Subscribers
 
-* Split the editor (`Cmd+\` on macOS or `Ctrl+\` on Windows and Linux).
-* Toggle preview (`Shift+Cmd+V` on macOS or `Shift+Ctrl+V` on Windows and Linux).
-* Press `Ctrl+Space` (Windows, Linux, macOS) to see a list of Markdown snippets.
+Quickly find all event subscribers across all loaded packages and your local project files using a guided 3-step Quick Pick:
 
-## For more information
+1. **Publisher object** — pick the object that publishes the event (e.g. `Codeunit "Sales-Post"`)
+2. **Event name** — pick the event (e.g. `OnBeforePostDocument`)
+3. **Element** *(optional)* — filter by field or action name for table/page events
 
-* [Visual Studio Code's Markdown Support](http://code.visualstudio.com/docs/languages/markdown)
-* [Markdown Syntax Reference](https://help.github.com/articles/markdown-basics/)
+After selecting a subscriber from the results list:
+- **Local `.al` files** — the file opens directly and VS Code jumps to the subscriber function
+- **Package `.app` files** — the AL source is extracted from the package and opened as a read-only document with full AL syntax highlighting, with the cursor placed at the subscriber function
 
-**Enjoy!**
+---
+
+## Commands
+
+| Command | Description |
+|---|---|
+| `AL Companion: Reload Packages` | Re-scan package cache directories and reload all packages |
+| `AL Companion: Search Event Subscriber` | Open the guided event subscriber search |
+
+## Extension Settings
+
+| Setting | Type | Default | Description |
+|---|---|---|---|
+| `al-companion.debugLogging` | `boolean` | `false` | Enable verbose debug logging to the *AL Companion* output channel |
+
+## Requirements
+
+- VS Code 1.109.0 or later
+- An AL project with an `app.json` file (Microsoft AL extension not required)
+
+## Known Issues
+
+Please report issues on [GitHub](https://github.com/DSaladinCH/al-companion/issues).
+
+## Release Notes
+
+See [CHANGELOG.md](CHANGELOG.md) for the full history.
