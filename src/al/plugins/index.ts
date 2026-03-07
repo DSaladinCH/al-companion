@@ -14,6 +14,7 @@
 import * as vscode from 'vscode';
 
 import { registerCommands as registerEventSubscriberCommands } from './eventSubscriberPlugin';
+import { registerCommands as registerLocalSearchCommands } from './localSearchPlugin';
 
 /**
  * Register all VS Code commands contributed by plugins.
@@ -21,4 +22,5 @@ import { registerCommands as registerEventSubscriberCommands } from './eventSubs
  */
 export function registerAllPluginCommands(context: vscode.ExtensionContext): void {
     registerEventSubscriberCommands(context);
+    registerLocalSearchCommands(context);
 }

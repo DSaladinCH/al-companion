@@ -54,6 +54,17 @@
 			{
 				"command": "al-companion.searchEventSubscriber",
 				"title": "AL Companion: Search Event Subscriber"
+			},
+			{
+				"command": "al-companion.searchLocalFiles",
+				"title": "AL Companion: Search Local Files"
+			}
+		],
+		"keybindings": [
+			{
+				"command": "al-companion.searchLocalFiles",
+				"key": "alt+shift+f",
+				"when": "resourceExtname == '.al' || editorLangId == 'al'"
 			}
 		],
 		"configuration": {

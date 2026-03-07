@@ -51,6 +51,25 @@ export interface AlFunction {
     isLocal: boolean;
     /** True when the function is marked internal. */
     isInternal: boolean;
+    /** True when this is a trigger (e.g. OnValidate) rather than a developer procedure. */
+    isTrigger: boolean;
+    /** Parsed Caption property of the function/trigger, if declared. */
+    caption?: string;
+}
+
+/** Kind of a non-function AL member (field, action, enum value, etc.). */
+export type AlElementKind = 'field' | 'action' | 'enumValue' | 'column';
+
+/** A non-function member inside an AL object (table field, page action, enum value, …). */
+export interface AlElement {
+    kind: AlElementKind;
+    /** Numeric ID for table fields and enum values. */
+    id?: number;
+    name: string;
+    /** Line number inside the source file (1-based). */
+    line: number;
+    /** Parsed Caption property of the element, if declared. */
+    caption?: string;
 }
 
 /** Represents a parsed event-subscriber decoration. */
@@ -72,10 +91,16 @@ export interface AlObject {
     type: AlObjectType;
     id: number;
     name: string;
+    /** Line number of the object header in the source file (1-based). */
+    line: number;
+    /** Parsed Caption property of the object, if declared. */
+    caption?: string;
     /** For *Extension objects – the object being extended. */
     extendsName?: string;
     functions: AlFunction[];
     eventSubscribers: AlEventSubscriber[];
+    /** Parsed non-function members: table fields, page field controls, actions, enum values, etc. */
+    elements: AlElement[];
     /** Absolute path of the .al source file – only set for local workspace objects. */
     sourceFilePath?: string;
     /** Path of the .al entry inside the .app ZIP – only set for package objects. */
