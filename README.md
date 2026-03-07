@@ -71,3 +71,6 @@ Please report issues on [GitHub](https://github.com/DSaladinCH/al-companion/issu
 ## Release Notes
 
 See [CHANGELOG.md](CHANGELOG.md) for the full history.
+
+## Logo
+The logo has been generated with Google Nano Banana 2
