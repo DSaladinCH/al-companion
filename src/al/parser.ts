@@ -37,7 +37,6 @@ const OBJECT_HEADER_RE =
 // Captures optional leading attribute lines and then the procedure line.
 // We walk line-by-line rather than using one big regex so that line numbers
 // stay exact even for files with Windows-style line endings.
-const ATTRIBUTE_RE = /^\s*\[(.+)\]\s*$/;
 const PROCEDURE_RE =
     /^\s*(local\s+|internal\s+)*(procedure|trigger)\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/i;
 
@@ -144,6 +143,8 @@ export function parseAlSource(source: string, fileName: string): AlObject | unde
     }
 
     const pendingAttributes: string[] = [];
+    // Accumulates attribute text across multiple lines until brackets balance.
+    let pendingAttrBuffer = '';
 
     for (let i = objectLine + 1; i < lines.length; i++) {
         const line = lines[i];
@@ -153,9 +154,20 @@ export function parseAlSource(source: string, fileName: string): AlObject | unde
         const { opens, closes } = countBraces(line);
 
         // ── Step 1: detect content BEFORE updating depth ──────────────────────
-        const attrMatch = line.match(ATTRIBUTE_RE);
-        if (attrMatch) {
-            pendingAttributes.push(attrMatch[1].trim());
+        // Handle both single-line and multi-line [Attribute(...)] declarations.
+        if (pendingAttrBuffer.length > 0 || trimmed.startsWith('[')) {
+            pendingAttrBuffer += (pendingAttrBuffer.length > 0 ? ' ' : '') + trimmed;
+            // Count bracket balance; the attribute is complete once all '[' are matched.
+            let balance = 0;
+            for (const ch of pendingAttrBuffer) {
+                if (ch === '[') { balance++; }
+                else if (ch === ']') { balance--; }
+            }
+            if (balance <= 0) {
+                const m = pendingAttrBuffer.match(/^\s*\[(.+)\]\s*$/);
+                if (m) { pendingAttributes.push(m[1].trim()); }
+                pendingAttrBuffer = '';
+            }
         } else {
             let elementFound = false;
 

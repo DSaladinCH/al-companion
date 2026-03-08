@@ -2,35 +2,24 @@ import * as vscode from 'vscode';
 import { AlObject, AlPackage, AlEventSubscriber } from '../types';
 import { AlParserPlugin, registerPlugin } from '../parser';
 import { getPackages } from '../packageStore';
-import { findAttribute } from './parserUtils';
+import { findAttribute, parseAttributeArgs, unquote } from './parserUtils';
 import * as logger from '../logger';
-
-// ---------------------------------------------------------------------------
-// EventSubscriber attribute regex
-// ---------------------------------------------------------------------------
-
-// Supported formats (second arg uses type qualifier, plain id, or quoted name):
-//   [EventSubscriber(ObjectType::Codeunit, Codeunit::"Sales-Post",  'OnBeforePost', '',    true, true)]
-//   [EventSubscriber(ObjectType::Table,    Database::"Sales Header", OnAfterInsert, 'No.', false, false)]
-//   [EventSubscriber(ObjectType::Codeunit, Codeunit::50100,          OnAfterMethod, '',    false, false)]
-//   [EventSubscriber(ObjectType::Codeunit, 50100,                    OnAfterMethod, '',    false, false)]
-//
-// Groups:
-//   1 – publisher object type  (e.g. "Codeunit", "Table")
-//   2 – publisher name quoted  (e.g. "Sales-Post", "Sales Header")  – or undefined
-//   3 – publisher name/id unquoted (e.g. "MyCodeunit", "50100")    – or undefined
-//   4 – event name             (with or without surrounding single quotes)
-//   5 – element name           (content of the 4th argument's single quotes, may be empty)
-const EVENT_SUB_RE =
-    /EventSubscriber\s*\(\s*ObjectType\s*::\s*(\w+)\s*,\s*(?:\w+\s*::\s*)?(?:"([^"]+)"|(\d+|[\w][\w.-]*)?)\s*,\s*'?([A-Za-z_][A-Za-z0-9_]*)'?\s*,\s*'([^']*)'/i;
 
 // ---------------------------------------------------------------------------
 // Parser plugin
 // ---------------------------------------------------------------------------
 
+// Quick guard to extract the publisher object type before delegating argument
+// parsing to parseAttributeArgs (which handles all quote styles).
+const EVENT_SUB_TYPE_RE = /^EventSubscriber\s*\(\s*ObjectType\s*::\s*(\w+)/i;
+
 /**
  * Scans every function on the object for an `[EventSubscriber(...)]`
  * attribute and populates `obj.eventSubscribers` accordingly.
+ *
+ * Uses `parseAttributeArgs` + `unquote` so that element names with double
+ * quotes (e.g. `"RIB M13 Customer Template Code"`), single quotes, or no
+ * quotes at all are all captured correctly.
  *
  * This plugin only writes to `obj.eventSubscribers` and never modifies
  * `obj.functions` — function storage is managed by the core parser and
@@ -43,16 +32,30 @@ const eventSubscriberPlugin: AlParserPlugin = (_source: string, obj: AlObject): 
         const attr = findAttribute(fn, 'EventSubscriber');
         if (!attr) { continue; }
 
-        const match = attr.match(EVENT_SUB_RE);
-        if (!match) { continue; }
+        const typeMatch = attr.match(EVENT_SUB_TYPE_RE);
+        if (!typeMatch) { continue; }
+
+        const args = parseAttributeArgs(attr);
+        if (args.length < 3) { continue; }
+
+        // arg[0] = ObjectType::Table
+        const publisherObjectType = typeMatch[1];
+
+        // arg[1] = Database::"Sales Header"  |  Codeunit::MyCU  |  50100
+        const publisherObjectName = unquote(args[1].trim().replace(/^\w+\s*::\s*/, ''));
+
+        // arg[2] = OnAfterValidateEvent  |  'OnBeforePost'
+        const eventName = unquote(args[2]);
+
+        // arg[3] = "RIB M13 Customer Template Code"  |  'No.'  |  MyField  |  ''  |  absent
+        const elementName = args.length >= 4 ? unquote(args[3]) : '';
 
         obj.eventSubscribers.push({
             fn,
-            publisherObjectType: match[1],
-            // group 2 = double-quoted name, group 3 = unquoted name or numeric id
-            publisherObjectName: (match[2] ?? match[3] ?? '').trim(),
-            eventName: match[4],
-            elementName: match[5],
+            publisherObjectType,
+            publisherObjectName,
+            eventName,
+            elementName,
         });
         modified = true;
     }
