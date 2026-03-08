@@ -44,6 +44,24 @@ After selecting a subscriber from the results list:
 - **Local `.al` files** — the file opens directly and VS Code jumps to the subscriber function
 - **Package `.app` files** — the AL source is extracted from the package and opened as a read-only document with full AL syntax highlighting, with the cursor placed at the subscriber function
 
+### ⚡ Quick Search (Local Files)
+
+Instantly navigate to any AL symbol in your local workspace using a single fuzzy Quick Pick. Open it with the **`AL Companion: Quick Search`** command and start typing — there is no separate "go to file" vs. "go to symbol" step.
+
+You can combine any of the following tokens in any order, separated by spaces:
+
+| What you type | What it matches |
+|---|---|
+| Part of an object, field, or procedure name | Names and captions of objects, fields, actions, enum values, and procedures/triggers |
+| An object type keyword (e.g. `codeunit`, `page`, `table`) | Filters results to that object type |
+| A numeric ID (e.g. `50100`) | Matches objects or fields by their numeric ID |
+| `trigger` or `procedure` | Narrows results to triggers or developer procedures |
+| Any element kind (`field`, `action`, `column`, `enumvalue`) | Filters to that element kind |
+
+Every token must match — results are ranked by a per-token score so the best matches appear at the top. Selecting a result opens the `.al` file and places the cursor at the matching symbol.
+
+> Results are built once per package-reload and cached, so repeated searches are near-instant.
+
 ---
 
 ## Commands
@@ -52,6 +70,7 @@ After selecting a subscriber from the results list:
 |---|---|
 | `AL Companion: Reload Packages` | Re-scan package cache directories and reload all packages |
 | `AL Companion: Search Event Subscriber` | Open the guided event subscriber search |
+| `AL Companion: Quick Search` | Open the fuzzy quick search over all local AL symbols |
 
 ## Extension Settings
 

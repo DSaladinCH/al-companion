@@ -24,6 +24,17 @@ export function clear(): void {
     store.clear();
 }
 
+/**
+ * Monotonically-increasing counter bumped after every completed
+ * `reloadAllPackages()` call. Plugins can compare against a locally-stored
+ * value to cheaply detect when their caches are stale.
+ */
+let storeVersion = 0;
+
+export function getStoreVersion(): number {
+    return storeVersion;
+}
+
 // ---------------------------------------------------------------------------
 // Discovery & loading
 // ---------------------------------------------------------------------------
@@ -227,6 +238,7 @@ export async function reloadAllPackages(): Promise<void> {
         }
     }
 
+    storeVersion++;
     vscode.window.showInformationMessage(
         `Loaded ${store.size} package(s) with ${totalObjects()} object(s).`
     );

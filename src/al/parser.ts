@@ -1,4 +1,4 @@
-import { AlObject, AlFunction, AlObjectType } from './types';
+import { AlObject, AlFunction, AlElement, AlObjectType } from './types';
 import * as logger from './logger';
 
 /**
@@ -42,6 +42,50 @@ const PROCEDURE_RE =
     /^\s*(local\s+|internal\s+)*(procedure|trigger)\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/i;
 
 // ---------------------------------------------------------------------------
+// Element regexes (fields, actions, enum values, columns)
+// ---------------------------------------------------------------------------
+
+// Table / enum fields:   field(3; "Name 3"; Text[50])  or  field(3; Name3; Text[50])
+const TABLE_FIELD_RE = /^\s*field\s*\(\s*(\d+)\s*;\s*"?([^";\/\r\n]+?)"?\s*;/i;
+
+// Page / extension field controls:  field("Control Name"; Rec."Field")  or  field(CtrlName; ...)
+// Only matches when first arg is NOT a plain number (avoids overlap with TABLE_FIELD_RE).
+const PAGE_FIELD_RE = /^\s*field\s*\(\s*(?:"([^"]+)"|([A-Za-z_][A-Za-z0-9_\s]*?))\s*;/i;
+
+// Page actions:   action("Action Name")  or  action(ActionName)
+const ACTION_RE = /^\s*action\s*\(\s*(?:"([^"]+)"|([A-Za-z_][A-Za-z0-9_]*))\s*\)/i;
+
+// Enum values:   value(0; "Some Value")  or  value(0; SomeValue)
+const ENUM_VALUE_RE = /^\s*value\s*\(\s*(\d+)\s*;\s*"?([^";\/\r\n)]+?)"?\s*\)/i;
+
+// Report / query columns:   column(ColumnName; Source)  or  column("Name"; Source)
+const COLUMN_RE = /^\s*column\s*\(\s*(?:"([^"]+)"|([A-Za-z_][A-Za-z0-9_]*))\s*;/i;
+
+// Caption property:   Caption = 'My Caption';   Caption = 'My Caption', Locked = true;
+const CAPTION_RE = /^\s*Caption\s*=\s*'([^']*)'/i;
+
+// ---------------------------------------------------------------------------
+// Brace counting (excludes braces inside string literals)
+// ---------------------------------------------------------------------------
+
+function countBraces(line: string): { opens: number; closes: number } {
+    let inSingle = false;
+    let inDouble = false;
+    let opens = 0;
+    let closes = 0;
+    for (let i = 0; i < line.length; i++) {
+        const ch = line[i];
+        if (ch === "'" && !inDouble)      { inSingle = !inSingle; }
+        else if (ch === '"' && !inSingle) { inDouble  = !inDouble; }
+        else if (!inSingle && !inDouble)  {
+            if (ch === '{') { opens++; }
+            else if (ch === '}') { closes++; }
+        }
+    }
+    return { opens, closes };
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -79,42 +123,151 @@ export function parseAlSource(source: string, fileName: string): AlObject | unde
         id: objectId,
         name: objectName,
         extendsName,
+        line: objectLine + 1,
         functions: [],
         eventSubscribers: [],
+        elements: [],
         extra: {},
     };
 
-    // Walk lines collecting attributes + procedures
+    // ── Depth + caption tracking ─────────────────────────────────────────────
+    // depth = 0 before the object body; rises to 1 on the first opening brace.
+    // captionTargets[depth] = item that owns a Caption statement at that depth.
+    const { opens: headerOpens } = countBraces(lines[objectLine]);
+    let depth = headerOpens > 0 ? 1 : 0;
+    const captionTargets = new Map<number, { caption?: string }>();
+    let pendingCaptionItem: { caption?: string } | null = null;
+    if (depth >= 1) {
+        captionTargets.set(1, alObject);
+    } else {
+        pendingCaptionItem = alObject;
+    }
+
     const pendingAttributes: string[] = [];
 
     for (let i = objectLine + 1; i < lines.length; i++) {
         const line = lines[i];
+        const trimmed = line.trim();
+        if (trimmed === '') { continue; }
 
+        const { opens, closes } = countBraces(line);
+
+        // ── Step 1: detect content BEFORE updating depth ──────────────────────
         const attrMatch = line.match(ATTRIBUTE_RE);
         if (attrMatch) {
             pendingAttributes.push(attrMatch[1].trim());
-            continue;
+        } else {
+            let elementFound = false;
+
+            const procMatch = line.match(PROCEDURE_RE);
+            if (procMatch) {
+                const modifiers = (procMatch[1] ?? '').toLowerCase();
+                const fn: AlFunction = {
+                    name: procMatch[3],
+                    line: i + 1,
+                    attributes: [...pendingAttributes],
+                    isLocal: modifiers.includes('local'),
+                    isInternal: modifiers.includes('internal'),
+                    isTrigger: procMatch[2].toLowerCase() === 'trigger',
+                };
+                alObject.functions.push(fn);
+                pendingCaptionItem = fn;
+                pendingAttributes.length = 0;
+                elementFound = true;
+            }
+
+            if (!elementFound && !trimmed.startsWith('//')) {
+                const tableFieldMatch = line.match(TABLE_FIELD_RE);
+                if (tableFieldMatch) {
+                    const el: AlElement = {
+                        kind: 'field', id: parseInt(tableFieldMatch[1], 10),
+                        name: tableFieldMatch[2].trim(), line: i + 1,
+                    };
+                    alObject.elements.push(el);
+                    pendingCaptionItem = el;
+                    elementFound = true;
+                }
+            }
+
+            if (!elementFound && !trimmed.startsWith('//')) {
+                const actionMatch = line.match(ACTION_RE);
+                if (actionMatch) {
+                    const el: AlElement = {
+                        kind: 'action',
+                        name: (actionMatch[1] ?? actionMatch[2]).trim(), line: i + 1,
+                    };
+                    alObject.elements.push(el);
+                    pendingCaptionItem = el;
+                    elementFound = true;
+                }
+            }
+
+            if (!elementFound && !trimmed.startsWith('//')) {
+                const enumValueMatch = line.match(ENUM_VALUE_RE);
+                if (enumValueMatch) {
+                    const el: AlElement = {
+                        kind: 'enumValue', id: parseInt(enumValueMatch[1], 10),
+                        name: enumValueMatch[2].trim(), line: i + 1,
+                    };
+                    alObject.elements.push(el);
+                    pendingCaptionItem = el;
+                    elementFound = true;
+                }
+            }
+
+            if (!elementFound && !trimmed.startsWith('//')) {
+                const columnMatch = line.match(COLUMN_RE);
+                if (columnMatch) {
+                    const el: AlElement = {
+                        kind: 'column',
+                        name: (columnMatch[1] ?? columnMatch[2]).trim(), line: i + 1,
+                    };
+                    alObject.elements.push(el);
+                    pendingCaptionItem = el;
+                    elementFound = true;
+                }
+            }
+
+            if (!elementFound && !trimmed.startsWith('//')) {
+                const pageFieldMatch = line.match(PAGE_FIELD_RE);
+                if (pageFieldMatch) {
+                    const el: AlElement = {
+                        kind: 'field',
+                        name: (pageFieldMatch[1] ?? pageFieldMatch[2]).trim(), line: i + 1,
+                    };
+                    alObject.elements.push(el);
+                    pendingCaptionItem = el;
+                    elementFound = true;
+                }
+            }
+
+            if (!elementFound) {
+                pendingAttributes.length = 0;
+            }
         }
 
-        const procMatch = line.match(PROCEDURE_RE);
-        if (procMatch) {
-            const modifiers = (procMatch[1] ?? '').toLowerCase();
-            const fnName = procMatch[3];
-            const fn: AlFunction = {
-                name: fnName,
-                line: i + 1, // 1-based
-                attributes: [...pendingAttributes],
-                isLocal: modifiers.includes('local'),
-                isInternal: modifiers.includes('internal'),
-            };
-            alObject.functions.push(fn);
-            pendingAttributes.length = 0;
-            continue;
+        // ── Step 2: apply opening braces ──────────────────────────────────────
+        for (let b = 0; b < opens; b++) {
+            depth++;
+            if (pendingCaptionItem) {
+                captionTargets.set(depth, pendingCaptionItem);
+                pendingCaptionItem = null;
+            }
         }
 
-        // Any non-attribute, non-procedure line clears pending attributes
-        if (line.trim() !== '') {
-            pendingAttributes.length = 0;
+        // ── Step 3: detect Caption at current depth ────────────────────────────
+        const captionMatch = line.match(CAPTION_RE);
+        if (captionMatch) {
+            const target = captionTargets.get(depth);
+            if (target && target.caption === undefined) {
+                target.caption = captionMatch[1];
+            }
+        }
+
+        // ── Step 4: apply closing braces ──────────────────────────────────────
+        for (let b = 0; b < closes; b++) {
+            captionTargets.delete(depth);
+            depth--;
         }
     }
 
