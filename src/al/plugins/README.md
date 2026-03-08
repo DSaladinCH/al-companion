@@ -15,7 +15,7 @@ Provides the **`AL Companion: Search Event Subscriber`** command, which guides t
 **Parser plugin** — `eventSubscriberPlugin` is registered as an `AlParserPlugin`. After the core parser has finished scanning an AL object, the plugin inspects every function's `attributes` array for an `[EventSubscriber(...)]` attribute:
 
 ```
-[EventSubscriber(ObjectType::Codeunit, Codeunit::"Sales-Post", 'OnBeforePost', '', true, true)]
+[EventSubscriber(ObjectType::Codeunit, Codeunit::"Sales-Post", OnBeforePost, '', true, true)]
 ```
 
 Supported second-argument forms:
