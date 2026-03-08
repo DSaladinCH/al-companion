@@ -36,6 +36,53 @@ export function getStoreVersion(): number {
 }
 
 // ---------------------------------------------------------------------------
+// Incremental local-file update
+// ---------------------------------------------------------------------------
+
+/**
+ * Re-parse a single local `.al` file and update the in-memory package that
+ * owns it, without touching any other package or file.
+ *
+ * This is called by the FileSystemWatcher in extension.ts whenever a local
+ * workspace `.al` file is created, changed, or deleted.  `storeVersion` is
+ * bumped so that plugin caches (e.g. localSearchPlugin) are invalidated.
+ */
+export async function reloadLocalFile(absoluteFilePath: string): Promise<void> {
+    // Find the local package whose workspace folder contains this file.
+    // Local packages have their `filePath` set to the workspace's app.json.
+    const localPkg = [...store.values()].find(pkg => {
+        if (!pkg.filePath.toLowerCase().endsWith('app.json')) { return false; }
+        const folderPath = path.dirname(pkg.filePath);
+        return absoluteFilePath.startsWith(folderPath + path.sep);
+    });
+
+    if (!localPkg) {
+        logger.debug(`reloadLocalFile: no local package found for ${absoluteFilePath}`);
+        return;
+    }
+
+    // Drop stale objects originating from this file.
+    localPkg.objects = localPkg.objects.filter(obj => obj.sourceFilePath !== absoluteFilePath);
+
+    // Re-parse and insert the new object(s) — skip when the file was deleted.
+    if (fs.existsSync(absoluteFilePath)) {
+        try {
+            const source = (await fs.promises.readFile(absoluteFilePath, 'utf8')).replace(/^\uFEFF/, '');
+            const obj = parseAlSource(source, absoluteFilePath);
+            if (obj) {
+                obj.sourceFilePath = absoluteFilePath;
+                localPkg.objects.push(obj);
+            }
+        } catch (err) {
+            logger.error(`reloadLocalFile: cannot read ${absoluteFilePath}`, err);
+        }
+    }
+
+    storeVersion++;
+    logger.log(`Refreshed symbols for: ${path.basename(absoluteFilePath)}`);
+}
+
+// ---------------------------------------------------------------------------
 // Discovery & loading
 // ---------------------------------------------------------------------------
 

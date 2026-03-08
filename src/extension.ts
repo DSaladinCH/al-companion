@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import { reloadAllPackages } from './al/packageStore';
+import { reloadAllPackages, reloadLocalFile } from './al/packageStore';
 import { getOutputChannel, log } from './al/logger';
 import { readAlFileFromPackage } from './al/packageReader';
 import { registerAllPluginCommands } from './al/plugins';
@@ -45,6 +45,20 @@ export function activate(context: vscode.ExtensionContext): void {
 				vscode.window.showErrorMessage(`Failed to load packages — ${err}`);
 			});
 		})
+	);
+
+	// Watch local .al files and keep their symbols up-to-date incrementally.
+	const alWatcher = vscode.workspace.createFileSystemWatcher('**/*.al');
+	const onAlFileEvent = (uri: vscode.Uri) => {
+		reloadLocalFile(uri.fsPath).catch(err => {
+			vscode.window.showErrorMessage(`Failed to update ${path.basename(uri.fsPath)} — ${err}`);
+		});
+	};
+	context.subscriptions.push(
+		alWatcher,
+		alWatcher.onDidChange(onAlFileEvent),
+		alWatcher.onDidCreate(onAlFileEvent),
+		alWatcher.onDidDelete(onAlFileEvent),
 	);
 
 	// Auto-load packages if at least one AL project is open
