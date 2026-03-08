@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { AlElement, AlFunction, AlObjectType } from '../types';
-import { getPackages } from '../packageStore';
+import { getPackages, getStoreVersion } from '../packageStore';
 
 // ---------------------------------------------------------------------------
 // Quick-pick item
@@ -10,8 +10,13 @@ import { getPackages } from '../packageStore';
 interface SearchResult extends vscode.QuickPickItem {
     filePath: string;
     line: number;
-    /** Full lower-cased bag of words for the all-tokens-must-match guard. */
-    searchText: string;
+    /**
+     * Extra search tokens not covered by the dedicated name fields:
+     * object ID, element ID (where applicable), and the kind keyword
+     * ("object" | "trigger" | "procedure" | element kind).
+     * Kept intentionally small to reduce per-item memory.
+     */
+    extraText: string;
     // Decomposed zones used for fine-grained scoring:
     memberName: string;   // lower-cased procedure / field / action / object name
     captionName: string;  // lower-cased Caption property value (empty when absent)
@@ -24,6 +29,13 @@ interface SearchResult extends vscode.QuickPickItem {
     /** Human-readable description without score prefix (stored for re-stamping). */
     baseDescription: string;
 }
+
+// ---------------------------------------------------------------------------
+// Result cache (invalidated on each package reload via storeVersion)
+// ---------------------------------------------------------------------------
+
+let cachedResults: SearchResult[] | null = null;
+let cachedStoreVersion = -1;
 
 // ---------------------------------------------------------------------------
 // Icon helpers
@@ -68,6 +80,16 @@ function iconForObjectType(type: AlObjectType): string {
 // ---------------------------------------------------------------------------
 
 function buildResults(): SearchResult[] {
+    const currentVersion = getStoreVersion();
+    if (cachedResults !== null && cachedStoreVersion === currentVersion) {
+        // Reset mutations from any previous search session before reusing.
+        for (const r of cachedResults) {
+            r.score = 0;
+            r.description = r.baseDescription;
+        }
+        return cachedResults;
+    }
+
     const results: SearchResult[] = [];
 
     for (const pkg of getPackages()) {
@@ -86,10 +108,6 @@ function buildResults(): SearchResult[] {
                 ? `  ·  "${obj.caption}"`
                 : '';
 
-            const baseSearchText = [
-                fileName, objectType, String(obj.id), objectName, extendsName, objCaptionLower,
-            ].join(' ').trimEnd();
-
             const baseDescriptionNoCaption = obj.extendsName
                 ? `${obj.type} "${obj.name}" extends "${obj.extendsName}"`
                 : `${obj.type} "${obj.name}"`;
@@ -106,7 +124,7 @@ function buildResults(): SearchResult[] {
                     alwaysShow: true,
                     filePath,
                     line: obj.line,
-                    searchText: `${baseSearchText} object`,
+                    extraText: obj.id > 0 ? `${obj.id} object` : 'object',
                     memberName: objectName,
                     captionName: objCaptionLower,
                     objectName, extendsName, fileName, objectType,
@@ -130,7 +148,7 @@ function buildResults(): SearchResult[] {
                     alwaysShow: true,
                     filePath,
                     line: fn.line,
-                    searchText: `${baseSearchText} ${memberName} ${captionName} ${fn.isTrigger ? 'trigger' : 'procedure'}`.trimEnd(),
+                    extraText: `${obj.id > 0 ? obj.id + ' ' : ''}${fn.isTrigger ? 'trigger' : 'procedure'}`,
                     memberName, captionName, objectName, extendsName, fileName, objectType,
                     score: 0,
                     baseDescription: fnBaseDesc,
@@ -154,7 +172,7 @@ function buildResults(): SearchResult[] {
                     alwaysShow: true,
                     filePath,
                     line: el.line,
-                    searchText: `${baseSearchText} ${memberName} ${captionName} ${idStr} ${el.kind}`.trimEnd(),
+                    extraText: [obj.id > 0 ? String(obj.id) : '', idStr, el.kind].filter(Boolean).join(' '),
                     memberName, captionName, objectName, extendsName, fileName, objectType,
                     score: 0,
                     baseDescription: elBaseDesc,
@@ -163,6 +181,8 @@ function buildResults(): SearchResult[] {
         }
     }
 
+    cachedResults = results;
+    cachedStoreVersion = currentVersion;
     return results;
 }
 
@@ -216,8 +236,13 @@ function scoreToken(r: SearchResult, token: string): number {
     if (r.extendsName && r.extendsName.includes(token))  { return 28; }
     if (r.fileName.includes(token))                      { return 23; }
 
-    // ── Fallback: type, id, kind ──────────────────────────────────────────────
-    if (r.searchText.includes(token))                    { return 10; }
+    // ── Object type (e.g. "codeunit", "table", "pageextension") ────────────────
+    if (r.objectType === token)                          { return 12; }
+    if (r.objectType.startsWith(token))                  { return  8; }
+    if (r.objectType.includes(token))                    { return  5; }
+
+    // ── Fallback: id, kind, trigger/procedure keyword ─────────────────────────
+    if (r.extraText.includes(token))                     { return 10; }
 
     return 0;
 }
