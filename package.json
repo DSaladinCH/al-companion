@@ -8,8 +8,8 @@
 		"name": "Dominic Saladin"
 	},
 	"license": "MIT",
-	"version": "0.2.0",
-    "icon": "logo_small.png",
+	"version": "0.2.1",
+	"icon": "logo_small.png",
 	"engines": {
 		"vscode": "^1.109.0"
 	},
@@ -79,7 +79,8 @@
 		}
 	},
 	"scripts": {
-		"vscode:prepublish": "npm run compile",
+		"vscode:prepublish": "npm run bundle",
+		"bundle": "esbuild src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node --minify",
 		"compile": "tsc -p ./",
 		"watch": "tsc -watch -p ./",
 		"lint": "eslint src",
@@ -91,6 +92,7 @@
 		"@types/node": "22.x",
 		"@types/vscode": "^1.109.0",
 		"@vscode/vsce": "^3.7.1",
+		"esbuild": "^0.27.3",
 		"eslint": "^9.39.3",
 		"typescript": "^5.9.3",
 		"typescript-eslint": "^8.56.1"

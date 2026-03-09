@@ -5,11 +5,13 @@ src/**
 .alpackages/**
 .snapshots/**
 .git/**
+.github/**
 .gitignore
 .yarnrc
 vsc-extension-quickstart.md
 node_modules/**
 out/test/**
+out/al/**
 **/tsconfig.json
 **/eslint.config.mjs
 **/*.map

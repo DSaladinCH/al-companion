@@ -1,6 +1,10 @@
 # Change Log
 All notable changes to the AL Companion extension will be documented in this file.
 
+## [v0.2.1] - 2026-03-09
+### Fixed
+- Extension failed to activate with "Cannot find module 'jszip'" after marketplace install — dependencies are now bundled into the extension output using esbuild
+
 ## [v0.2] - 2026-03-09
 ### Added
 - **Quick Search** command — search AL symbols (objects, functions, fields) across all loaded packages with instant filtering
@@ -23,5 +27,6 @@ All notable changes to the AL Companion extension will be documented in this fil
 - `al-companion.debugLogging` setting for verbose output channel logging
 - Plugin architecture — parser plugins can extend object data; event subscriber detection is a built-in plugin
 
+[v0.2.1]: https://github.com/DSaladinCH/al-companion/compare/v0.2...v0.2.1
 [v0.2]: https://github.com/DSaladinCH/al-companion/compare/v0.1...v0.2
 [v0.1]: https://github.com/DSaladinCH/al-companion/releases/tag/v0.1
