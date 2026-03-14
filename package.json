@@ -58,6 +58,10 @@
 			{
 				"command": "al-companion.searchLocalFiles",
 				"title": "AL Companion: Search Local Files"
+			},
+			{
+				"command": "al-companion.jumpToFunctionLine",
+				"title": "AL Companion: Jump to Function Line"
 			}
 		],
 		"keybindings": [
