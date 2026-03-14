@@ -103,5 +103,9 @@
 	},
 	"dependencies": {
 		"jszip": "^3.10.1"
+	},
+	"overrides": {
+		"yauzl": "^3.2.1",
+		"flatted": "^3.4.0"
 	}
 }
