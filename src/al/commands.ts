@@ -1,242 +1,58 @@
 import * as vscode from 'vscode';
-import { AlPackage, AlEventSubscriber, AlObject } from './types';
-import { getPackages } from './packageStore';
-import * as logger from './logger';
+import { AlPackage, AlObject } from './types';
 
 // ---------------------------------------------------------------------------
-// Search Event Subscriber command
+// Centralized file opening utility
 // ---------------------------------------------------------------------------
 
 /**
- * Multi-step Quick Pick flow for finding event subscribers:
- *   1. Pick publisher object  (all distinct publishers found in loaded packages)
- *   2. Pick event name        (all distinct events for that publisher)
- *   3. Pick element (optional)(all distinct elements for that publisher+event;
- *                              skipped when every subscriber has no element)
- * Then shows matching results in a final Quick Pick.
+ * Open an AL object in the VS Code editor, optionally positioning the cursor
+ * at a specific line and column.
+ *
+ * Handles three cases:
+ * 1. Local `.al` file (sourceFilePath) — opens as a regular editable document
+ * 2. Package `.app` ZIP entry (zipEntryName) — serves via virtual provider, opens in preview mode
+ * 3. Neither available — shows an info message with object coordinates
+ *
+ * @param obj The AL object to open
+ * @param pkg The package containing the object
+ * @param line Optional line number (1-based); defaults to object declaration line
+ * @param column Optional column number (0-based); defaults to 0
  */
-export async function searchEventSubscriberCommand(): Promise<void> {
-    const packages = getPackages();
-    if (packages.length === 0) {
-        vscode.window.showWarningMessage('No packages loaded. Run "AL Companion: Reload Packages" first.');
-        return;
-    }
-
-    // ── Step 1: pick publisher object ────────────────────────────────────────
-    type PublisherItem = vscode.QuickPickItem & { publisherType: string; publisherName: string };
-
-    const publisherMap = new Map<string, PublisherItem>();
-    for (const pkg of packages) {
-        for (const obj of pkg.objects) {
-            for (const sub of obj.eventSubscribers) {
-                const key = `${sub.publisherObjectType}::${sub.publisherObjectName}`;
-                if (!publisherMap.has(key)) {
-                    publisherMap.set(key, {
-                        label: `$(symbol-class) ${sub.publisherObjectName}`,
-                        description: sub.publisherObjectType,
-                        publisherType: sub.publisherObjectType,
-                        publisherName: sub.publisherObjectName,
-                    });
-                }
-            }
-        }
-    }
-
-    const publisherItems = [...publisherMap.values()].sort((a, b) =>
-        a.publisherName.localeCompare(b.publisherName)
-    );
-
-    if (publisherItems.length === 0) {
-        vscode.window.showInformationMessage('No event subscribers found in loaded packages.');
-        return;
-    }
-
-    const pickedPublisher = await vscode.window.showQuickPick(publisherItems, {
-        title: 'Search Event Subscriber (1/3) — Publisher object',
-        matchOnDescription: true,
-        placeHolder: 'Select the object that publishes the event',
-    });
-    if (!pickedPublisher) { return; }
-
-    const { publisherType, publisherName } = pickedPublisher;
-
-    // ── Step 2: pick event name ──────────────────────────────────────────────
-    const eventNames = collectDistinct(
-        packages,
-        sub => sub.publisherObjectType === publisherType && sub.publisherObjectName === publisherName,
-        sub => sub.eventName
-    );
-
-    const eventItems: vscode.QuickPickItem[] = eventNames
-        .sort()
-        .map(e => ({ label: `$(symbol-event) ${e}`, description: e }));
-
-    const pickedEvent = await vscode.window.showQuickPick(eventItems, {
-        title: `Search Event Subscriber (2/3) — Event on ${publisherType} "${publisherName}"`,
-        placeHolder: 'Select the event name',
-    });
-    if (!pickedEvent) { return; }
-
-    const eventName = pickedEvent.description!;
-
-    // ── Step 3: pick element (optional) ─────────────────────────────────────
-    const elements = collectDistinct(
-        packages,
-        sub =>
-            sub.publisherObjectType === publisherType &&
-            sub.publisherObjectName === publisherName &&
-            sub.eventName === eventName,
-        sub => sub.elementName
-    ).filter(e => e !== '');
-
-    let elementFilter = '';
-    if (elements.length > 0) {
-        type ElementItem = vscode.QuickPickItem & { value: string };
-        const anyItem: ElementItem = {
-            label: '$(symbol-misc) Any element',
-            description: 'No element filter',
-            value: '',
-        };
-        const elementItems: ElementItem[] = [
-            anyItem,
-            ...elements.sort().map(e => ({ label: `$(symbol-field) ${e}`, description: e, value: e })),
-        ];
-
-        const pickedElement = await vscode.window.showQuickPick(elementItems, {
-            title: `Search Event Subscriber (3/3) — Element filter for ${eventName}`,
-            placeHolder: 'Select a field / action, or "Any element" to skip',
-        });
-        if (!pickedElement) { return; }
-        elementFilter = (pickedElement as ElementItem).value;
-    }
-
-    // ── Run search & show results ────────────────────────────────────────────
-    const results = searchEventSubscribers(packages, publisherType, publisherName, eventName, elementFilter);
-    logger.debug(`Event subscriber search "${publisherType}::${publisherName}.${eventName}" → ${results.length} result(s)`);
-
-    if (results.length === 0) {
-        vscode.window.showInformationMessage(
-            `No event subscribers found for "${publisherType} ${publisherName} → ${eventName}".`
-        );
-        return;
-    }
-
-    await showEventSubscriberResults(results, publisherName, eventName);
-}
-
-// ---------------------------------------------------------------------------
-// Search logic
-// ---------------------------------------------------------------------------
-
-interface EventSubscriberResult {
-    pkg: AlPackage;
-    obj: AlObject;
-    sub: AlEventSubscriber;
-}
-
-function searchEventSubscribers(
-    packages: AlPackage[],
-    publisherType: string,
-    publisherName: string,
-    eventName: string,
-    element: string
-): EventSubscriberResult[] {
-    const results: EventSubscriberResult[] = [];
-    for (const pkg of packages) {
-        for (const obj of pkg.objects) {
-            for (const sub of obj.eventSubscribers) {
-                if (sub.publisherObjectType !== publisherType) { continue; }
-                if (sub.publisherObjectName !== publisherName) { continue; }
-                if (sub.eventName !== eventName) { continue; }
-                if (element && sub.elementName !== element) { continue; }
-                results.push({ pkg, obj, sub });
-            }
-        }
-    }
-    return results;
-}
-
-// ---------------------------------------------------------------------------
-// Quick Pick display
-// ---------------------------------------------------------------------------
-
-async function showEventSubscriberResults(
-    results: EventSubscriberResult[],
-    publisherName: string,
-    eventName: string
+export async function showAlObject(
+    obj: AlObject,
+    pkg: AlPackage,
+    line?: number,
+    column?: number
 ): Promise<void> {
-    type Item = vscode.QuickPickItem & { result: EventSubscriberResult };
+    const targetLine = line ?? obj.line;
+    const targetColumn = column ?? 0;
+    const pos = new vscode.Position(Math.max(0, targetLine - 1), Math.max(0, targetColumn));
 
-    const items: Item[] = results.map(r => ({
-        label: `$(symbol-function) ${r.sub.fn.name}`,
-        description: `${r.obj.type} ${r.obj.id} "${r.obj.name}"${r.sub.elementName ? `  ·  [${r.sub.elementName}]` : ''}`,
-        detail: `${r.pkg.publisher} – ${r.pkg.name} ${r.pkg.version}  ·  line ${r.sub.fn.line}`,
-        result: r,
-    }));
-
-    const picked = await vscode.window.showQuickPick(items, {
-        title: `Subscribers of "${publisherName} → ${eventName}" (${results.length})`,
-        matchOnDescription: true,
-        matchOnDetail: true,
-    });
-
-    if (picked) {
-        logger.debug(`Selected subscriber: ${picked.result.sub.fn.name}`);
-        const r = picked.result;
-
-        if (r.obj.sourceFilePath) {
-            // Local workspace file – open it and jump to the subscriber function
-            const uri = vscode.Uri.file(r.obj.sourceFilePath);
-            const line = Math.max(0, r.sub.fn.line - 1); // convert to 0-based
-            const pos = new vscode.Position(line, 0);
-            const doc = await vscode.workspace.openTextDocument(uri);
-            await vscode.window.showTextDocument(doc, {
-                selection: new vscode.Range(pos, pos),
-            });
-        } else if (r.obj.zipEntryName) {
-            // Package (.app) file – serve AL source via virtual document provider
-            const uri = vscode.Uri.from({
-                scheme: 'al-companion-app',
-                path: '/' + r.obj.zipEntryName,
-                query: 'path=' + encodeURIComponent(r.pkg.filePath),
-            });
-            const line = Math.max(0, r.sub.fn.line - 1);
-            const pos = new vscode.Position(line, 0);
-            const doc = await vscode.workspace.openTextDocument(uri);
-            await vscode.window.showTextDocument(doc, {
-                selection: new vscode.Range(pos, pos),
-                preview: true,
-            });
-        } else {
-            vscode.window.showInformationMessage(
-                `${r.sub.fn.name} (${r.obj.type} "${r.obj.name}") — ${r.pkg.publisher} ${r.pkg.name} ${r.pkg.version} — line ${r.sub.fn.line}`
-            );
-        }
+    if (obj.sourceFilePath) {
+        const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(obj.sourceFilePath));
+        await vscode.window.showTextDocument(doc, { selection: new vscode.Range(pos, pos) });
+    } else if (obj.zipEntryName) {
+        const uri = vscode.Uri.from({
+            scheme: 'al-companion-app',
+            path: '/' + obj.zipEntryName,
+            query: 'path=' + encodeURIComponent(pkg.filePath),
+        });
+        const doc = await vscode.workspace.openTextDocument(uri);
+        await vscode.window.showTextDocument(doc, { selection: new vscode.Range(pos, pos), preview: true });
+    } else {
+        vscode.window.showInformationMessage(
+            `${obj.type} "${obj.name}" — ${pkg.publisher} ${pkg.name} ${pkg.version} — line ${targetLine}`
+        );
     }
 }
 
 // ---------------------------------------------------------------------------
-// Utilities
+// Note: Command implementations have been moved to plugins
 // ---------------------------------------------------------------------------
-
-/**
- * Collect all distinct values of `getValue(sub)` from every event subscriber
- * across all packages, filtered by `predicate(sub)`.
- */
-function collectDistinct(
-    packages: AlPackage[],
-    predicate: (sub: AlEventSubscriber) => boolean,
-    getValue: (sub: AlEventSubscriber) => string
-): string[] {
-    const seen = new Set<string>();
-    for (const pkg of packages) {
-        for (const obj of pkg.objects) {
-            for (const sub of obj.eventSubscribers) {
-                if (predicate(sub)) {
-                    seen.add(getValue(sub));
-                }
-            }
-        }
-    }
-    return [...seen];
-}
+// This file now contains only shared utility functions like showAlObject.
+// Specific command logic resides in the corresponding plugin files:
+// - eventSubscriberPlugin.ts: searchEventSubscriber command
+// - navigateToObjectPlugin.ts: navigateToReferencedObject command
+// - localSearchPlugin.ts: searchLocalFiles command
+// - jumpToFunctionLinePlugin.ts: jumpToFunctionLine command

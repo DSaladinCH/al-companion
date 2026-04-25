@@ -1,7 +1,8 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { AlElement, AlFunction, AlObjectType } from '../types';
+import { AlElement, AlFunction, AlObjectType, AlObject, AlPackage } from '../types';
 import { getPackages, getStoreVersion } from '../packageStore';
+import { showAlObject } from '../commands';
 
 // ---------------------------------------------------------------------------
 // Quick-pick item
@@ -10,6 +11,8 @@ import { getPackages, getStoreVersion } from '../packageStore';
 interface SearchResult extends vscode.QuickPickItem {
     filePath: string;
     line: number;
+    obj: AlObject;        // Reference to the source AL object
+    pkg: AlPackage;       // Reference to the package
     /**
      * Extra search tokens not covered by the dedicated name fields:
      * object ID, element ID (where applicable), and the kind keyword
@@ -124,6 +127,8 @@ function buildResults(): SearchResult[] {
                     alwaysShow: true,
                     filePath,
                     line: obj.line,
+                    obj,
+                    pkg,
                     extraText: obj.id > 0 ? `${obj.id} object` : 'object',
                     memberName: objectName,
                     captionName: objCaptionLower,
@@ -148,6 +153,8 @@ function buildResults(): SearchResult[] {
                     alwaysShow: true,
                     filePath,
                     line: fn.line,
+                    obj,
+                    pkg,
                     extraText: `${obj.id > 0 ? obj.id + ' ' : ''}${fn.isTrigger ? 'trigger' : 'procedure'}`,
                     memberName, captionName, objectName, extendsName, fileName, objectType,
                     score: 0,
@@ -172,6 +179,8 @@ function buildResults(): SearchResult[] {
                     alwaysShow: true,
                     filePath,
                     line: el.line,
+                    obj,
+                    pkg,
                     extraText: [obj.id > 0 ? String(obj.id) : '', idStr, el.kind].filter(Boolean).join(' '),
                     memberName, captionName, objectName, extendsName, fileName, objectType,
                     score: 0,
@@ -294,12 +303,7 @@ function scoreAndFilter(all: SearchResult[], query: string): SearchResult[] {
 // ---------------------------------------------------------------------------
 
 async function openResult(result: SearchResult): Promise<void> {
-    const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(result.filePath));
-    const editor = await vscode.window.showTextDocument(doc);
-    const line = Math.max(0, result.line - 1); // convert 1-based → 0-based
-    const pos = new vscode.Position(line, 0);
-    editor.selection = new vscode.Selection(pos, pos);
-    editor.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenter);
+    await showAlObject(result.obj, result.pkg, result.line);
 }
 
 // ---------------------------------------------------------------------------

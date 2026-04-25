@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { AlObject, AlObjectType, AlPackage } from '../types';
 import { AlParserPlugin, registerPlugin } from '../parser';
 import { getPackages } from '../packageStore';
+import { showAlObject } from '../commands';
 import * as logger from '../logger';
 
 
@@ -264,41 +265,6 @@ function resolveObjectReference(
 }
 
 // ---------------------------------------------------------------------------
-// Helper: open an AlObject in the editor
-// ---------------------------------------------------------------------------
-
-/**
- * Open `obj` in the VS Code editor, placing the cursor on its declaration
- * line.
- *
- * - Local `.al` files open as a regular, editable document.
- * - Objects from a `.app` package are served through the `al-companion-app:`
- *   virtual document provider and opened in read-only preview mode.
- * - If neither path is available, an info message with the object coordinates
- *   is shown as a fallback.
- */
-async function openAlObject(obj: AlObject, pkg: AlPackage): Promise<void> {
-    const pos = new vscode.Position(Math.max(0, obj.line - 1), 0);
-
-    if (obj.sourceFilePath) {
-        const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(obj.sourceFilePath));
-        await vscode.window.showTextDocument(doc, { selection: new vscode.Range(pos, pos) });
-    } else if (obj.zipEntryName) {
-        const uri = vscode.Uri.from({
-            scheme: 'al-companion-app',
-            path: '/' + obj.zipEntryName,
-            query: 'path=' + encodeURIComponent(pkg.filePath),
-        });
-        const doc = await vscode.workspace.openTextDocument(uri);
-        await vscode.window.showTextDocument(doc, { selection: new vscode.Range(pos, pos), preview: true });
-    } else {
-        vscode.window.showInformationMessage(
-            `${obj.type} "${obj.name}" — ${pkg.publisher} ${pkg.name} ${pkg.version} — line ${obj.line}`
-        );
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Command
 // ---------------------------------------------------------------------------
 
@@ -407,7 +373,7 @@ async function navigateToReferencedObjectCommand(): Promise<void> {
     // Find the package that owns the target object (reference equality works
     // because all AlObject instances come from the same in-memory store).
     const targetPkg = packages.find(p => p.objects.includes(target)) ?? currentPkg;
-    await openAlObject(target, targetPkg);
+    await showAlObject(target, targetPkg);
 }
 
 // ---------------------------------------------------------------------------

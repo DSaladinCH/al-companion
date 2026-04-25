@@ -3,6 +3,7 @@ import { AlObject, AlPackage, AlEventSubscriber } from '../types';
 import { AlParserPlugin, registerPlugin } from '../parser';
 import { getPackages } from '../packageStore';
 import { findAttribute, parseAttributeArgs, unquote } from './parserUtils';
+import { showAlObject } from '../commands';
 import * as logger from '../logger';
 
 // ---------------------------------------------------------------------------
@@ -231,25 +232,7 @@ async function showResults(
     logger.debug(`Selected subscriber: ${picked.result.sub.fn.name}`);
     const r = picked.result;
 
-    if (r.obj.sourceFilePath) {
-        const uri = vscode.Uri.file(r.obj.sourceFilePath);
-        const pos = new vscode.Position(Math.max(0, r.sub.fn.line - 1), 0);
-        const doc = await vscode.workspace.openTextDocument(uri);
-        await vscode.window.showTextDocument(doc, { selection: new vscode.Range(pos, pos) });
-    } else if (r.obj.zipEntryName) {
-        const uri = vscode.Uri.from({
-            scheme: 'al-companion-app',
-            path: '/' + r.obj.zipEntryName,
-            query: 'path=' + encodeURIComponent(r.pkg.filePath),
-        });
-        const pos = new vscode.Position(Math.max(0, r.sub.fn.line - 1), 0);
-        const doc = await vscode.workspace.openTextDocument(uri);
-        await vscode.window.showTextDocument(doc, { selection: new vscode.Range(pos, pos), preview: true });
-    } else {
-        vscode.window.showInformationMessage(
-            `${r.sub.fn.name} (${r.obj.type} "${r.obj.name}") — ${r.pkg.publisher} ${r.pkg.name} ${r.pkg.version} — line ${r.sub.fn.line}`
-        );
-    }
+    await showAlObject(r.obj, r.pkg, r.sub.fn.line);
 }
 
 function collectDistinct(
