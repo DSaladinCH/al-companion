@@ -74,16 +74,17 @@ export async function readAppManifest(filePath: string): Promise<AlAppManifest |
 /**
  * Read a single .app file and return its parsed AlPackage, or undefined on error.
  *
+ * REQUIRES: You must call readAppManifest() first and pass the result here.
+ * This avoids duplicate manifest parsing.
+ *
  * AL .app files are ZIP archives.  Inside the ZIP there may be:
- *  - A NavxManifest.xml (older format)
- *  - An app.json (newer format)
  *  - AL source files under src/ or directly in the root
  *
  * Sometimes the archive is prefixed with a few "magic" bytes that are not
  * part of the ZIP stream.  We probe for the PK header and strip any leading
  * garbage before handing the buffer to JSZip.
  */
-export async function readAppFile(filePath: string, knownManifest?: AlAppManifest): Promise<AlPackage | undefined> {
+export async function readAppFile(filePath: string, knownManifest: AlAppManifest): Promise<AlPackage | undefined> {
     logger.debug(`Reading package: ${filePath}`);
 
     let rawBuffer: Buffer;
@@ -110,48 +111,11 @@ export async function readAppFile(filePath: string, knownManifest?: AlAppManifes
         return undefined;
     }
 
-    // ── Determine package identity ──────────────────────────────────────────
-    let publisher: string;
-    let name: string;
-    let version: string;
-
-    if (knownManifest) {
-        // Reuse manifest from Step 2 — skip re-parsing app.json/NavxManifest
-        publisher = knownManifest.publisher;
-        name = knownManifest.name;
-        version = knownManifest.version;
-    } else {
-        publisher = 'Unknown';
-        name = path.basename(filePath, '.app');
-        version = '0.0.0.0';
-
-        const appJsonFile = zip.file('app.json');
-        if (appJsonFile) {
-            try {
-                const json = JSON.parse(await appJsonFile.async('string'));
-                publisher = json.publisher ?? publisher;
-                name = json.name ?? name;
-                version = json.version ?? version;
-            } catch (err) {
-                logger.error(`Cannot parse app.json in ${filePath}`, err);
-            }
-        } else {
-            const manifestFile = zip.file('NavxManifest.xml');
-            if (manifestFile) {
-                try {
-                    const xml = await manifestFile.async('string');
-                    const pubMatch = xml.match(/Publisher\s*=\s*"([^"]+)"/i);
-                    const nameMatch = xml.match(/(?:^|<)App[^>]+\s+Name\s*=\s*"([^"]+)"/i);
-                    const verMatch = xml.match(/Version\s*=\s*"([^"]+)"/i);
-                    if (pubMatch) { publisher = pubMatch[1]; }
-                    if (nameMatch) { name = nameMatch[1]; }
-                    if (verMatch) { version = verMatch[1]; }
-                } catch (err) {
-                    logger.error(`Cannot parse NavxManifest.xml in ${filePath}`, err);
-                }
-            }
-        }
-    }
+    // ── Use provided manifest ──────────────────────────────────────────
+    const publisher = knownManifest.publisher;
+    const name = knownManifest.name;
+    const version = knownManifest.version;
+    const appId = knownManifest.id;
 
     const packageId = `${publisher}_${name}_${version}`.replace(/\s+/g, '_');
 
@@ -187,6 +151,7 @@ export async function readAppFile(filePath: string, knownManifest?: AlAppManifes
         name,
         version,
         filePath,
+        appId,
         objects,
     };
 }

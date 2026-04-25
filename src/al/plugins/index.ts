@@ -16,6 +16,7 @@ import * as vscode from 'vscode';
 import { registerCommands as registerEventSubscriberCommands } from './eventSubscriberPlugin';
 import { registerCommands as registerLocalSearchCommands } from './localSearchPlugin';
 import { registerCommands as registerJumpToFunctionLineCommands } from './jumpToFunctionLinePlugin';
+import { registerCommands as registerNavigateToObjectCommands } from './navigateToObjectPlugin';
 
 /**
  * Register all VS Code commands contributed by plugins.
@@ -25,4 +26,5 @@ export function registerAllPluginCommands(context: vscode.ExtensionContext): voi
     registerEventSubscriberCommands(context);
     registerLocalSearchCommands(context);
     registerJumpToFunctionLineCommands(context);
+    registerNavigateToObjectCommands(context);
 }

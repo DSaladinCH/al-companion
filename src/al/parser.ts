@@ -28,7 +28,7 @@ export function registerPlugin(plugin: AlParserPlugin): void {
 //           codeunit 50300 MyCU
 // The opening brace is optional – it may appear on the next line in AL source.
 const OBJECT_HEADER_RE =
-    /^\s*(table|tableextension|page|pageextension|codeunit|report|query|xmlport|enum|enumextension|interface|permissionset|permissionsetextension)\s+(\d+)\s+"?([^"\r\n{]+?)"?\s*(?:extends\s+"?([^"\r\n{]+?)"?)?\s*(?:\{|$)/i;
+    /^\s*(table|tableextension|page|pageextension|codeunit|report|reportextension|query|xmlport|enum|enumextension|interface|permissionset|permissionsetextension)\s+(\d+)\s+"?([^"\r\n{]+?)"?\s*(?:extends\s+"?([^"\r\n{]+?)"?)?\s*(?:\{|$)/i;
 
 // ---------------------------------------------------------------------------
 // Procedure / trigger regex
