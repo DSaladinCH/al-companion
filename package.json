@@ -62,12 +62,21 @@
 			{
 				"command": "al-companion.jumpToFunctionLine",
 				"title": "AL Companion: Jump to Function Line"
+			},
+			{
+				"command": "al-companion.navigateToReferencedObject",
+				"title": "AL Companion: Navigate to Referenced Object"
 			}
 		],
 		"keybindings": [
 			{
 				"command": "al-companion.searchLocalFiles",
 				"key": "alt+shift+f",
+				"when": "resourceExtname == '.al' || editorLangId == 'al'"
+			},
+			{
+				"command": "al-companion.navigateToReferencedObject",
+				"key": "alt+shift+o",
 				"when": "resourceExtname == '.al' || editorLangId == 'al'"
 			}
 		],

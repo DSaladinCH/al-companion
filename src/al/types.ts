@@ -97,6 +97,12 @@ export interface AlObject {
     caption?: string;
     /** For *Extension objects – the object being extended. */
     extendsName?: string;
+    /** For Page objects – the SourceTable property value. */
+    sourceTable?: string;
+    /** Namespace declared at the top of the source file, e.g. "MyCompany.MyApp". */
+    namespace?: string;
+    /** Using directives declared at the top of the source file. */
+    usings?: string[];
     functions: AlFunction[];
     eventSubscribers: AlEventSubscriber[];
     /** Parsed non-function members: table fields, page field controls, actions, enum values, etc. */

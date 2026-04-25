@@ -106,6 +106,75 @@ Because each `SearchResult` stores token-ready lower-cased strings in dedicated 
 
 ---
 
+## Navigate to Referenced Object (`navigateToObjectPlugin.ts`)
+
+### What it does
+
+Provides the **`AL Companion: Navigate to Referenced Object`** command (`Alt+Shift+O`).  When invoked from an open `.al` file (local or read-only from a `.app` package), it collects every navigatable object reference on the active AL object and either opens the target directly or presents a Quick Pick when multiple references are available.
+
+Supported references out of the box:
+
+| Object type | References offered |
+|---|---|
+| `TableExtension` | Extends Table |
+| `PageExtension` | Extends Page · Source Table (resolved from the base page) |
+| `ReportExtension` | Extends Report |
+| `EnumExtension` | Extends Enum |
+| `PermissionSetExtension` | Extends PermissionSet |
+| `Page` | Source Table |
+
+### How it works
+
+**Parser plugin** — `navigateToObjectPlugin` is registered as an `AlParserPlugin`.  After the core parser has finished, the plugin scans the raw source text for:
+
+- `namespace <name>;` — stored in `obj.namespace`.
+- `using <name>;` — accumulated into `obj.usings[]`.
+- `SourceTable = <name>;` (Page objects only) — stored in `obj.sourceTable`.
+
+These fields are used at command invocation time for namespace-aware resolution and do not affect the core symbol model.
+
+**Extensible collector registry** — rather than hard-coding every possible reference property type, the plugin exposes an exported `registerReferenceCollector()` function.  Any plugin can call it at module level to contribute additional reference types (e.g. `LookupPageId`, `DrillDownPageId`):
+
+```typescript
+import { registerReferenceCollector } from './navigateToObjectPlugin';
+
+registerReferenceCollector((obj, packages) => {
+    if (obj.type !== 'Table') { return []; }
+    const lookupPage = /* read LookupPageId from obj.extra or source */;
+    if (!lookupPage) { return []; }
+    return [{
+        label: `$(go-to-file) Lookup Page: "${lookupPage}"`,
+        description: 'Page',
+        refName: lookupPage,
+        targetTypes: ['Page'],
+    }];
+});
+```
+
+**Namespace-aware resolution** — `resolveObjectReference()` finds the best single match for a reference name by ranking candidates:
+
+1. Object in the **same namespace** as the source object (e.g. another object in `MyCompany.MyApp`).
+2. Object in a namespace listed in the source object's **`using` directives**.
+3. Object with **no namespace** — global symbols, base BC objects such as `Customer` or `Item`.
+4. Any other match (different namespace, not imported) — the fallback.
+
+Within each priority tier the first match found wins, consistent with the AL compiler's own resolution behaviour.  In a well-formed project this produces exactly one result for every reference.
+
+**Navigation** — after the target `AlObject` is resolved:
+
+- **Local `.al` file** → opens the file and positions the cursor on the object declaration line.
+- **Package `.app` file** → extracts the AL source from the ZIP via the `al-companion-app:` virtual document provider and opens it in read-only preview mode; cursor lands on the object declaration line.
+
+### Extending
+
+To support new reference property types (e.g. page properties such as `LookupPageId`) without modifying this plugin:
+
+1. Parse the property value into `obj.extra` using your own `AlParserPlugin`.
+2. Call `registerReferenceCollector(...)` at module level in your plugin, reading from `obj.extra`.
+3. No changes to `navigateToObjectPlugin.ts` are required.
+
+---
+
 ## Adding a new plugin
 
 1. Create a new `.ts` file in this folder (e.g. `myFeaturePlugin.ts`).
