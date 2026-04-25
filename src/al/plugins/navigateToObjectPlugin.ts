@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { AlObject, AlObjectType, AlPackage } from '../types';
 import { AlParserPlugin, registerPlugin } from '../parser';
 import { getPackages } from '../packageStore';
-import { showAlObject } from '../commands';
+import { showAlObjectUsingPreviewScheme } from '../commands';
 import * as logger from '../logger';
 
 
@@ -373,7 +373,7 @@ async function navigateToReferencedObjectCommand(): Promise<void> {
     // Find the package that owns the target object (reference equality works
     // because all AlObject instances come from the same in-memory store).
     const targetPkg = packages.find(p => p.objects.includes(target)) ?? currentPkg;
-    await showAlObject(target, targetPkg);
+    await showAlObjectUsingPreviewScheme(target, targetPkg);
 }
 
 // ---------------------------------------------------------------------------

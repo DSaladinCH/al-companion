@@ -3,7 +3,7 @@ import { AlObject, AlPackage, AlEventSubscriber } from '../types';
 import { AlParserPlugin, registerPlugin } from '../parser';
 import { getPackages } from '../packageStore';
 import { findAttribute, parseAttributeArgs, unquote } from './parserUtils';
-import { showAlObject } from '../commands';
+import { showAlObjectUsingPreviewScheme } from '../commands';
 import * as logger from '../logger';
 
 // ---------------------------------------------------------------------------
@@ -232,7 +232,7 @@ async function showResults(
     logger.debug(`Selected subscriber: ${picked.result.sub.fn.name}`);
     const r = picked.result;
 
-    await showAlObject(r.obj, r.pkg, r.sub.fn.line);
+    await showAlObjectUsingPreviewScheme(r.obj, r.pkg, r.sub.fn.line);
 }
 
 function collectDistinct(

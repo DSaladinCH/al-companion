@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { AlElement, AlFunction, AlObjectType, AlObject, AlPackage } from '../types';
 import { getPackages, getStoreVersion } from '../packageStore';
-import { showAlObject } from '../commands';
+import { showAlObjectUsingPreviewScheme } from '../commands';
 
 // ---------------------------------------------------------------------------
 // Quick-pick item
@@ -303,7 +303,7 @@ function scoreAndFilter(all: SearchResult[], query: string): SearchResult[] {
 // ---------------------------------------------------------------------------
 
 async function openResult(result: SearchResult): Promise<void> {
-    await showAlObject(result.obj, result.pkg, result.line);
+    await showAlObjectUsingPreviewScheme(result.obj, result.pkg, result.line);
 }
 
 // ---------------------------------------------------------------------------

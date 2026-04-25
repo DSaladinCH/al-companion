@@ -124,5 +124,7 @@ export interface AlPackage {
     version: string;
     /** Absolute path of the .app file. */
     filePath: string;
+    /** Real app GUID from app.json or NavxManifest.xml (if available). */
+    appId?: string;
     objects: AlObject[];
 }

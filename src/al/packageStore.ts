@@ -160,25 +160,14 @@ export async function reloadAllPackages(): Promise<void> {
 
     logger.log(`Resolving ${requiredDeps.size} declared dependency(s) from ${candidateFiles.length} candidate file(s).`);
 
-    // ── Step 2: Read manifests of all candidates and select best matches ────
+    // ── Step 2: Read manifests of all candidates ────────────────────────────
+    // Use the PackageReader to read all manifests consistently.
+    // This ensures all package metadata (publisher, name, version, id) is
+    // extracted uniformly from either app.json or NavxManifest.xml.
     const manifests: AlAppManifest[] = [];
-    // Fast path: resolve identity from the filename alone where possible.
-    // For non-standard filenames, fall back to reading the manifest from the ZIP.
-    const zipFallbacks: string[] = [];
-    for (const filePath of candidateFiles) {
-        const fromName = parseAppFilename(filePath);
-        if (fromName) {
-            manifests.push(fromName);
-        } else {
-            logger.debug(`Non-standard filename, reading manifest from ZIP: ${filePath}`);
-            zipFallbacks.push(filePath);
-        }
-    }
-
-    // Read non-standard manifests in parallel
-    if (zipFallbacks.length > 0) {
-        const fallbackResults = await Promise.all(zipFallbacks.map(f => readAppManifest(f)));
-        for (const m of fallbackResults) {
+    if (candidateFiles.length > 0) {
+        const results = await Promise.all(candidateFiles.map(f => readAppManifest(f)));
+        for (const m of results) {
             if (m) { manifests.push(m); }
         }
     }
@@ -303,12 +292,14 @@ async function loadLocalProject(folderPath: string, appJsonPath: string): Promis
     let publisher = 'Unknown';
     let name = path.basename(folderPath);
     let version = '0.0.0.0';
+    let appId: string | undefined;
 
     try {
         const json = JSON.parse(await fs.promises.readFile(appJsonPath, 'utf8'));
         publisher = json.publisher ?? publisher;
         name = json.name ?? name;
         version = json.version ?? version;
+        appId = json.id;
     } catch (err) {
         logger.error(`Cannot parse ${appJsonPath}`, err);
         return undefined;
@@ -340,7 +331,7 @@ async function loadLocalProject(folderPath: string, appJsonPath: string): Promis
     await Promise.all(Array.from({ length: Math.min(LOCAL_CONCURRENCY, alFiles.length) }, parseFile));
 
     const id = `${publisher}_${name}_${version}`.replace(/\s+/g, '_');
-    return { id, publisher, name, version, filePath: appJsonPath, objects };
+    return { id, publisher, name, version, filePath: appJsonPath, appId, objects };
 }
 
 // ---------------------------------------------------------------------------
@@ -376,38 +367,6 @@ const MICROSOFT_PLATFORM_PACKAGES = new Set([
 function isMicrosoftPlatformPackage(m: AlAppManifest): boolean {
     return m.publisher.toLowerCase() === 'microsoft' &&
         MICROSOFT_PLATFORM_PACKAGES.has(m.name.toLowerCase());
-}
-
-// ---------------------------------------------------------------------------
-// Filename-based manifest parsing
-// ---------------------------------------------------------------------------
-
-/**
- * Try to extract publisher / name / version from the .app filename.
- *
- * AL package filenames follow the convention:
- *   Publisher_AppName_W.X.Y.Z.app
- *
- * The publisher is everything before the first underscore; the name is
- * everything between the first underscore and the last version-pattern
- * segment; spaces are preserved.
- *
- * Returns undefined when the filename cannot be parsed (non-standard names).
- */
-function parseAppFilename(filePath: string): AlAppManifest | undefined {
-    const base = path.basename(filePath, '.app');
-    // Anchor on version at the end: Publisher_Name_W.X.Y.Z
-    const match = base.match(/^(.+?)_(.+)_(\d+\.\d+\.\d+\.\d+)$/);
-    if (!match) {
-        return undefined;
-    }
-    return {
-        id: undefined,
-        publisher: match[1],
-        name: match[2],
-        version: match[3],
-        filePath,
-    };
 }
 
 // ---------------------------------------------------------------------------
