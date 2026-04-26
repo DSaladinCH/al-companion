@@ -79,11 +79,24 @@ export async function showAlObjectUsingPreviewScheme(
         // Package file: use al-preview://allang/ scheme
         // Prefer real app GUID (appId), fall back to package name, sanitize to remove non-word chars
         const safeAppId = (pkg.appId ?? pkg.name).replace(/\W/g, '');
-        const safeObjectName = obj.name.replace(/\W/g, '');
-        const uri = vscode.Uri.parse(
-            `al-preview://allang/${safeAppId}/${obj.type}/${obj.id}/${safeObjectName}.dal`
-        );
-        const doc = await vscode.workspace.openTextDocument(uri);
+        const safeObjectId = obj.id === 0 ? '-1' : obj.id.toString();
+        console.log(obj.zipEntryName);
+
+        let doc: vscode.TextDocument;
+        try {
+            // First attempt: use sanitized object name
+            const safeObjectName = obj.name.replace(/\W/g, '');
+            const uri = vscode.Uri.parse(
+                `al-preview://allang/${safeAppId}/${obj.type}/${safeObjectId}/${safeObjectName}.dal`
+            );
+            doc = await vscode.workspace.openTextDocument(uri);
+        } catch {
+            // Fallback: use raw object name
+            const uri = vscode.Uri.parse(
+                `al-preview://allang/${safeAppId}/${obj.type}/${safeObjectId}/${obj.name}.dal`
+            );
+            doc = await vscode.workspace.openTextDocument(uri);
+        }
         await vscode.window.showTextDocument(doc, { selection: new vscode.Range(pos, pos), preview: true });
     }
 }

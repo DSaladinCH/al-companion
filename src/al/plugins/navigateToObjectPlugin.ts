@@ -208,17 +208,30 @@ registerReferenceCollector((obj) => {
  * object name that should be matched against `AlObject.name`.
  *
  * AL reference forms handled:
- * - `Microsoft.Sales."Sales Header"`  → `Sales Header`
- * - `Microsoft.Sales.Customer`        → `Customer`
- * - `"Sales Header"`                  → `Sales Header`
- * - `Customer`                        → `Customer`
+ * - `Microsoft.CRM.Contact."Contact Alt. Contact"` → `Contact Alt. Contact`
+ * - `Microsoft.Sales.Customer`                     → `Customer`
+ * - `"Contact Alt. Contact"`                       → `Contact Alt. Contact`
+ * - `RIB INIM. Test`                               → `RIB INIM. Test` (spaces = originally quoted)
+ * - `Customer`                                     → `Customer`
+ *
+ * Key insight: Dots within quoted names are preserved as `."..."`. Unquoted namespace
+ * separators are never surrounded by spaces. If unquoted and contains spaces, it was
+ * originally quoted with its outer quotes stripped by the regex.
  */
 function stripNamespacePrefix(ref: string): string {
-    // Namespace."Quoted Name" — take the quoted portion
-    const quotedSuffix = ref.match(/\."([^"]+)"\s*$/);
-    if (quotedSuffix) { return quotedSuffix[1]; }
+    // Case 1: Extract from Namespace."Quoted Name" pattern
+    const namespacedQuoted = ref.match(/\."([^"]+)"\s*$/);
+    if (namespacedQuoted) { return namespacedQuoted[1]; }
 
-    // Namespace.UnquotedName — take the last dot-separated segment
+    // Case 2: Extract from just "Quoted Name" pattern
+    const plainQuoted = ref.match(/^"([^"]+)"\s*$/);
+    if (plainQuoted) { return plainQuoted[1]; }
+
+    // Case 3: If unquoted but contains spaces, it was originally quoted with outer quotes stripped
+    // (e.g., regex extracted `RIB INIM. Test` from `SourceTable = "RIB INIM. Test"`)
+    if (ref.includes(' ')) { return ref; }
+
+    // Case 4: Standard namespace.Name pattern (unquoted, no spaces)
     const dotIdx = ref.lastIndexOf('.');
     if (dotIdx >= 0) { return ref.slice(dotIdx + 1); }
 
@@ -248,7 +261,11 @@ function resolveObjectReference(
     packages: AlPackage[]
 ): AlObject | undefined {
     const bare = stripNamespacePrefix(refName).toLowerCase();
+    // Sanitize the reference name the same way al-preview URIs do (remove non-word chars)
+    const sanitizedRef = bare.replace(/\W/g, '');
     const usings = sourceUsings ?? [];
+
+    logger.debug(`resolveObjectReference: refName="${refName}" targetTypes=${targetTypes} sanitizedRef="${sanitizedRef}"`);
 
     let sameNs: AlObject | undefined;
     let inUsings: AlObject | undefined;
@@ -259,7 +276,12 @@ function resolveObjectReference(
     for (const pkg of packages) {
         for (const obj of pkg.objects) {
             if (!targetTypes.includes(obj.type)) { continue; }
-            if (obj.name.toLowerCase() !== bare) { continue; }
+            
+            // Compare using sanitized names (same as al-preview URIs)
+            const sanitizedObjName = obj.name.toLowerCase().replace(/\W/g, '');
+            if (sanitizedObjName !== sanitizedRef) { continue; }
+
+            logger.debug(`resolveObjectReference: Found match! obj.name="${obj.name}" sanitized="${sanitizedObjName}"`);
 
             const objNs = obj.namespace ?? '';
 
@@ -314,6 +336,19 @@ async function navigateToReferencedObjectCommand(): Promise<void> {
             if (pkgPath && pkg.filePath !== pkgPath) { continue; }
             const obj = pkg.objects.find(o => o.zipEntryName === entryName);
             if (obj) { currentObj = obj; currentPkg = pkg; break; }
+        }
+    } else if (docUri.scheme === 'al-preview') {
+        // al-preview://allang/{appId}/{objectType}/{objectId}/{objectName}.dal
+        // Note: appId may be sanitized package name or all zeros; use package matching instead
+        const parts = docUri.path.split('/').filter(p => p);
+        if (parts.length >= 4) {
+            // parts[1] = objectType, parts[2] = objectId, parts[3] = objectName.dal
+            const objectType = parts[1] as AlObjectType;
+            const objectId = parseInt(parts[2], 10);
+            for (const pkg of packages) {
+                const obj = pkg.objects.find(o => o.type === objectType && o.id === objectId);
+                if (obj) { currentObj = obj; currentPkg = pkg; break; }
+            }
         }
     }
 
