@@ -362,6 +362,7 @@ const MICROSOFT_PLATFORM_PACKAGES = new Set([
     'system application',
     'base application',
     'application',
+    'business foundation'
 ]);
 
 function isMicrosoftPlatformPackage(m: AlAppManifest): boolean {

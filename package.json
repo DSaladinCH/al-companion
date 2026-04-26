@@ -101,6 +101,7 @@
 		"publish": "vsce publish"
 	},
 	"devDependencies": {
+		"@types/he": "^1.2.3",
 		"@types/jszip": "^3.4.0",
 		"@types/node": "22.x",
 		"@types/vscode": "^1.109.0",
@@ -111,6 +112,7 @@
 		"typescript-eslint": "^8.56.1"
 	},
 	"dependencies": {
+		"he": "^1.2.0",
 		"jszip": "^3.10.1"
 	},
 	"overrides": {

@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import JSZip from 'jszip';
+import * as he from 'he';
 import { AlPackage, AlObject, AlAppManifest } from './types';
 import { parseAlSource } from './parser';
 import * as logger from './logger';
@@ -42,9 +43,9 @@ export async function readAppManifest(filePath: string): Promise<AlAppManifest |
     if (appJsonFile) {
         try {
             const json = JSON.parse(await appJsonFile.async('string'));
-            publisher = json.publisher ?? publisher;
-            name = json.name ?? name;
-            version = json.version ?? version;
+            publisher = he.decode(json.publisher ?? publisher);
+            name = he.decode(json.name ?? name);
+            version = he.decode(json.version ?? version);
             id = json.id;
         } catch (err) {
             logger.error(`Cannot parse app.json in ${filePath}`, err);
@@ -58,10 +59,10 @@ export async function readAppManifest(filePath: string): Promise<AlAppManifest |
                 const nameMatch = xml.match(/(?:^|<)App[^>]+\s+Name\s*=\s*"([^"]+)"/i);
                 const verMatch = xml.match(/Version\s*=\s*"([^"]+)"/i);
                 const idMatch = xml.match(/Id\s*=\s*"([^"]+)"/i);
-                if (pubMatch) { publisher = pubMatch[1]; }
-                if (nameMatch) { name = nameMatch[1]; }
-                if (verMatch) { version = verMatch[1]; }
-                if (idMatch) { id = idMatch[1]; }
+                if (pubMatch) { publisher = he.decode(pubMatch[1]); }
+                if (nameMatch) { name = he.decode(nameMatch[1]); }
+                if (verMatch) { version = he.decode(verMatch[1]); }
+                if (idMatch) { id = he.decode(idMatch[1]); }
             } catch (err) {
                 logger.error(`Cannot parse NavxManifest.xml in ${filePath}`, err);
             }
