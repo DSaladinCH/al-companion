@@ -25,10 +25,16 @@ export function registerPlugin(plugin: AlParserPlugin): void {
 // Matches:  table 50100 "My Table"
 //           table 50100 "My Table" {
 //           tableextension 50200 "My Ext" extends "My Table"
-//           codeunit 50300 MyCU
+//           codeunit 50300 MyCU implements IMyInterface
+//           codeunit 50300 MyCU implements "Email Connector", "Email Connector v2"
+//           interface MyInterface
+//           profile MyProfile
+//           entitlement MyEntitlement
+//           controladdin MyAddin
 // The opening brace is optional – it may appear on the next line in AL source.
+// Object ID is required for most types but optional for interface, profile, profileextension, entitlement, controladdin.
 const OBJECT_HEADER_RE =
-    /^\s*(table|tableextension|page|pageextension|codeunit|report|reportextension|query|xmlport|enum|enumextension|interface|permissionset|permissionsetextension)\s+(\d+)\s+"?([^"\r\n{]+?)"?\s*(?:extends\s+"?([^"\r\n{]+?)"?)?\s*(?:\{|$)/i;
+    /^\s*(table|tableextension|page|pageextension|codeunit|report|reportextension|query|xmlport|enum|enumextension|interface|profile|profileextension|entitlement|controladdin|permissionset|permissionsetextension)\s+(?:(\d+)\s+)?"?([^"\r\n{]+?)"?\s*(?:extends\s+"?([^"\r\n{]+?)"?)?\s*(?:implements\s+([^{]+?))?\s*(?:\{|$)/i;
 
 // ---------------------------------------------------------------------------
 // Procedure / trigger regex
@@ -113,15 +119,29 @@ export function parseAlSource(source: string, fileName: string): AlObject | unde
 
     const rawType = headerMatch[1].toLowerCase();
     const objectType = mapObjectType(rawType);
-    const objectId = parseInt(headerMatch[2], 10);
+    const objectId = headerMatch[2] ? parseInt(headerMatch[2], 10) : 0;
     const objectName = headerMatch[3].trim();
     const extendsName = headerMatch[4]?.trim();
+
+    // Parse implements clause: can be comma-separated list of quoted or unquoted names
+    let implementsNames: string[] | undefined;
+    if (headerMatch[5]) {
+        implementsNames = headerMatch[5]
+            .split(',')
+            .map(s => s.trim())
+            .map(s => s.replace(/^"(.+?)"$/, '$1')) // Remove surrounding quotes if present
+            .filter(s => s.length > 0);
+        if (implementsNames.length === 0) {
+            implementsNames = undefined;
+        }
+    }
 
     const alObject: AlObject = {
         type: objectType,
         id: objectId,
         name: objectName,
         extendsName,
+        implementsNames,
         line: objectLine + 1,
         functions: [],
         eventSubscribers: [],
@@ -316,6 +336,10 @@ const OBJECT_TYPE_MAP: Record<string, AlObjectType> = {
     interface: 'Interface',
     permissionset: 'PermissionSet',
     permissionsetextension: 'PermissionSetExtension',
+    profile: 'Profile',
+    profileextension: 'ProfileExtension',
+    entitlement: 'Entitlement',
+    controladdin: 'ControlAddin',
 };
 
 function mapObjectType(raw: string): AlObjectType {

@@ -38,6 +38,10 @@ export type AlObjectType =
     | 'Interface'
     | 'PermissionSet'
     | 'PermissionSetExtension'
+    | 'Profile'
+    | 'ProfileExtension'
+    | 'Entitlement'
+    | 'ControlAddin'
     | 'Unknown';
 
 /** Represents a single procedure / trigger parsed from an AL object. */
@@ -97,6 +101,8 @@ export interface AlObject {
     caption?: string;
     /** For *Extension objects – the object being extended. */
     extendsName?: string;
+    /** For Codeunit/Enum objects – comma-separated list of interfaces being implemented. */
+    implementsNames?: string[];
     /** For Page objects – the SourceTable property value. */
     sourceTable?: string;
     /** Namespace declared at the top of the source file, e.g. "MyCompany.MyApp". */
