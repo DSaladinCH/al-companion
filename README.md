@@ -71,6 +71,8 @@ Every token must match — results are ranked by a per-token score so the best m
 | `AL Companion: Reload Packages` | Re-scan package cache directories and reload all packages |
 | `AL Companion: Search Event Subscriber` | Open the guided event subscriber search |
 | `AL Companion: Quick Search` | Open the fuzzy quick search over all local AL symbols |
+| `AL Companion: Navigate to Referenced Object` | Navigate to extended objects, source tables, or implemented interfaces (`Alt+Shift+O`) |
+| `AL Companion: Jump to Function Line` | Jump to a specific line within the function at the cursor |
 
 ## Extension Settings
 

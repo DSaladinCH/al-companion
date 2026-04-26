@@ -135,6 +135,7 @@ function extensionBaseType(extType: AlObjectType): AlObjectType | undefined {
         case 'ReportExtension':         return 'Report';
         case 'EnumExtension':           return 'Enum';
         case 'PermissionSetExtension':  return 'PermissionSet';
+        case 'ProfileExtension':        return 'Profile';
         default: return undefined;
     }
 }
@@ -182,6 +183,20 @@ registerReferenceCollector((obj, packages) => {
         refName: basePage.sourceTable,
         targetTypes: ['Table'],
     }];
+});
+
+// ── Implements: Codeunit and Enum objects ────────────────────────────────────
+// A Codeunit or Enum can implement one or more interfaces.  Each implemented
+// interface is presented as a navigatable reference.
+registerReferenceCollector((obj) => {
+    if ((obj.type !== 'Codeunit' && obj.type !== 'Enum') || !obj.implementsNames) { return []; }
+
+    return obj.implementsNames.map((ifaceName, idx) => ({
+        label: `$(type-hierarchy-super) Implements: "${ifaceName}"`,
+        description: 'Interface',
+        refName: ifaceName,
+        targetTypes: ['Interface'],
+    }));
 });
 
 // ---------------------------------------------------------------------------

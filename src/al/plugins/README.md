@@ -106,6 +106,14 @@ Because each `SearchResult` stores token-ready lower-cased strings in dedicated 
 
 ---
 
+## Jump to Function Line (`jumpToFunctionLinePlugin.ts`)
+
+### What it does
+
+Provides the **`AL Companion: Jump to Function Line`** command. When invoked with the cursor inside a function (procedure or trigger), it prompts for a line number and jumps to that line within the function. Line counting starts from the line immediately after the function declaration line.
+
+---
+
 ## Navigate to Referenced Object (`navigateToObjectPlugin.ts`)
 
 ### What it does
@@ -121,7 +129,10 @@ Supported references out of the box:
 | `ReportExtension` | Extends Report |
 | `EnumExtension` | Extends Enum |
 | `PermissionSetExtension` | Extends PermissionSet |
+| `ProfileExtension` | Extends Profile |
 | `Page` | Source Table |
+| `Codeunit` | Implements Interface(s) |
+| `Enum` | Implements Interface(s) |
 
 ### How it works
 
@@ -130,6 +141,8 @@ Supported references out of the box:
 - `namespace <name>;` — stored in `obj.namespace`.
 - `using <name>;` — accumulated into `obj.usings[]`.
 - `SourceTable = <name>;` (Page objects only) — stored in `obj.sourceTable`.
+
+The core parser separately extracts `implements` directives from the object header into `obj.implementsNames[]`.
 
 These fields are used at command invocation time for namespace-aware resolution and do not affect the core symbol model.
 
