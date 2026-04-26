@@ -4,7 +4,7 @@ import * as path from 'path';
 import { reloadAllPackages, reloadLocalFile } from './al/packageStore';
 import { getOutputChannel, log } from './al/logger';
 import { readAlFileFromPackage } from './al/packageReader';
-import { registerAllPluginCommands } from './al/plugins';
+import { registerAllPluginCommands, buildTranslationIndex } from './al/plugins';
 
 // ---------------------------------------------------------------------------
 // Virtual document provider for .al files inside .app packages
@@ -41,9 +41,11 @@ export function activate(context: vscode.ExtensionContext): void {
 
 	context.subscriptions.push(
 		vscode.commands.registerCommand('al-companion.reloadPackages', () => {
-			reloadAllPackages().catch(err => {
-				vscode.window.showErrorMessage(`Failed to load packages — ${err}`);
-			});
+			reloadAllPackages()
+				.then(() => buildTranslationIndex())
+				.catch(err => {
+					vscode.window.showErrorMessage(`Failed to load packages — ${err}`);
+				});
 		})
 	);
 
@@ -67,9 +69,11 @@ export function activate(context: vscode.ExtensionContext): void {
 	);
 
 	if (hasAlProject) {
-		reloadAllPackages().catch(err => {
-			vscode.window.showErrorMessage(`Failed to load packages — ${err}`);
-		});
+		reloadAllPackages()
+			.then(() => buildTranslationIndex())
+			.catch(err => {
+				vscode.window.showErrorMessage(`Failed to load packages — ${err}`);
+			});
 	}
 }
 

@@ -204,7 +204,7 @@ export async function readAlFileFromPackage(pkgFilePath: string, entryName: stri
  * AL .app files sometimes have a vendor-specific header prefixed before the
  * actual ZIP stream.  We scan for the local-file-header signature PK\x03\x04.
  */
-function findZipStart(buf: Buffer): Buffer | undefined {
+export function findZipStart(buf: Buffer): Buffer | undefined {
     // Fast path: starts right at offset 0
     if (buf[0] === 0x50 && buf[1] === 0x4B) {
         return buf;

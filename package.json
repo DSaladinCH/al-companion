@@ -66,6 +66,10 @@
 			{
 				"command": "al-companion.navigateToReferencedObject",
 				"title": "AL Companion: Navigate to Referenced Object"
+			},
+			{
+				"command": "al-companion.searchTranslations",
+				"title": "AL Companion: Search Translations"
 			}
 		],
 		"keybindings": [
