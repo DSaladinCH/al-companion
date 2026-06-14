@@ -8,7 +8,7 @@
 		"name": "Dominic Saladin"
 	},
 	"license": "MIT",
-	"version": "0.3",
+	"version": "0.3.0",
 	"icon": "logo_small.png",
 	"engines": {
 		"vscode": "^1.109.0"
