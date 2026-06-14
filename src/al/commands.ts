@@ -1,5 +1,47 @@
 import * as vscode from 'vscode';
-import { AlPackage, AlObject } from './types';
+import { AlPackage, AlObject, AlObjectType } from './types';
+import { getObjectBySourcePath, getObjectByZipEntry, getObjectById } from './packageStore';
+
+// ---------------------------------------------------------------------------
+// Object lookup utility
+// ---------------------------------------------------------------------------
+
+/**
+ * Identify the AlObject currently open in the active editor.
+ * Supports local files, package ZIP entries, and al-preview:// URIs.
+ * Uses O(1) lookup maps instead of linear scans.
+ *
+ * @returns Object and package pair, or undefined if not found or no editor
+ */
+export function getCurrentAlObject(): { obj: AlObject; pkg: AlPackage } | undefined {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) { return undefined; }
+
+    const docUri = editor.document.uri;
+
+    if (docUri.scheme === 'file') {
+        // Local .al file: O(1) lookup by path
+        const result = getObjectBySourcePath(docUri.fsPath);
+        if (result) { return result; }
+    } else if (docUri.scheme === 'al-companion-app') {
+        // Package .app file: O(1) lookup by ZIP entry name
+        const entryName = docUri.path.slice(1);
+        const result = getObjectByZipEntry(entryName);
+        if (result) { return result; }
+    } else if (docUri.scheme === 'al-preview') {
+        // al-preview://allang/{appId}/{objectType}/{objectId}/{objectName}.dal
+        // O(1) lookup by type and ID
+        const parts = docUri.path.split('/').filter(p => p);
+        if (parts.length >= 4) {
+            const objectType = parts[1] as AlObjectType;
+            const objectId = parseInt(parts[2], 10);
+            const result = getObjectById(objectType, objectId);
+            if (result) { return result; }
+        }
+    }
+
+    return undefined;
+}
 
 // ---------------------------------------------------------------------------
 // Centralized file opening utility

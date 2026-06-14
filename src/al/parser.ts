@@ -1,5 +1,6 @@
 import { AlObject, AlFunction, AlElement, AlObjectType } from './types';
 import * as logger from './logger';
+import { PROCEDURE_RE } from './plugins/parserUtils';
 
 /**
  * A parser plugin receives the full source text of one AL file and the
@@ -35,16 +36,6 @@ export function registerPlugin(plugin: AlParserPlugin): void {
 // Object ID is required for most types but optional for interface, profile, profileextension, entitlement, controladdin.
 const OBJECT_HEADER_RE =
     /^\s*(table|tableextension|page|pageextension|codeunit|report|reportextension|query|xmlport|enum|enumextension|interface|profile|profileextension|entitlement|controladdin|permissionset|permissionsetextension)\s+(?:(\d+)\s+)?"?([^"\r\n{]+?)"?\s*(?:extends\s+"?([^"\r\n{]+?)"?)?\s*(?:implements\s+([^{]+?))?\s*(?:\{|$)/i;
-
-// ---------------------------------------------------------------------------
-// Procedure / trigger regex
-// ---------------------------------------------------------------------------
-
-// Captures optional leading attribute lines and then the procedure line.
-// We walk line-by-line rather than using one big regex so that line numbers
-// stay exact even for files with Windows-style line endings.
-const PROCEDURE_RE =
-    /^\s*(local\s+|internal\s+)*(procedure|trigger)\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/i;
 
 // ---------------------------------------------------------------------------
 // Element regexes (fields, actions, enum values, columns)

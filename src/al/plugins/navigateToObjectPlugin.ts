@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { AlObject, AlObjectType, AlPackage } from '../types';
 import { AlParserPlugin, registerPlugin } from '../parser';
 import { getPackages } from '../packageStore';
-import { showAlObjectUsingPreviewScheme } from '../commands';
+import { showAlObjectUsingPreviewScheme, getCurrentAlObject } from '../commands';
 import * as logger from '../logger';
 
 
@@ -306,59 +306,22 @@ function resolveObjectReference(
 // ---------------------------------------------------------------------------
 
 async function navigateToReferencedObjectCommand(): Promise<void> {
-    const editor = vscode.window.activeTextEditor;
-    if (!editor) {
-        vscode.window.showErrorMessage('AL Companion: No active editor.');
-        return;
-    }
-
     const packages = getPackages();
     if (packages.length === 0) {
         vscode.window.showWarningMessage('No packages loaded. Run "AL Companion: Reload Packages" first.');
         return;
     }
 
-    // ── Identify the AlObject for the active document ────────────────────────
-    const docUri = editor.document.uri;
-    let currentObj: AlObject | undefined;
-    let currentPkg: AlPackage | undefined;
-
-    if (docUri.scheme === 'file') {
-        const fsPath = docUri.fsPath;
-        for (const pkg of packages) {
-            const obj = pkg.objects.find(o => o.sourceFilePath === fsPath);
-            if (obj) { currentObj = obj; currentPkg = pkg; break; }
-        }
-    } else if (docUri.scheme === 'al-companion-app') {
-        const entryName = docUri.path.slice(1);
-        const pkgPath = new URLSearchParams(docUri.query).get('path');
-        for (const pkg of packages) {
-            if (pkgPath && pkg.filePath !== pkgPath) { continue; }
-            const obj = pkg.objects.find(o => o.zipEntryName === entryName);
-            if (obj) { currentObj = obj; currentPkg = pkg; break; }
-        }
-    } else if (docUri.scheme === 'al-preview') {
-        // al-preview://allang/{appId}/{objectType}/{objectId}/{objectName}.dal
-        // Note: appId may be sanitized package name or all zeros; use package matching instead
-        const parts = docUri.path.split('/').filter(p => p);
-        if (parts.length >= 4) {
-            // parts[1] = objectType, parts[2] = objectId, parts[3] = objectName.dal
-            const objectType = parts[1] as AlObjectType;
-            const objectId = parseInt(parts[2], 10);
-            for (const pkg of packages) {
-                const obj = pkg.objects.find(o => o.type === objectType && o.id === objectId);
-                if (obj) { currentObj = obj; currentPkg = pkg; break; }
-            }
-        }
-    }
-
-    if (!currentObj || !currentPkg) {
+    const current = getCurrentAlObject();
+    if (!current) {
         vscode.window.showErrorMessage(
             'AL Companion: Could not identify the AL object in the active editor. ' +
             'Try "AL Companion: Reload Packages".'
         );
         return;
     }
+
+    const { obj: currentObj, pkg: currentPkg } = current;
 
     // ── Collect all navigatable reference properties ─────────────────────────
     const properties: ReferenceProperty[] = referenceCollectors.flatMap(collector => {

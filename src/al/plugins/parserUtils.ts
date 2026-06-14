@@ -1,6 +1,16 @@
 import { AlFunction } from '../types';
 
 // ---------------------------------------------------------------------------
+// Shared regexes (used by parser and plugins)
+// ---------------------------------------------------------------------------
+
+/**
+ * Matches procedure or trigger declarations with optional local/internal modifiers.
+ * Groups: [1] = modifiers, [2] = "procedure" or "trigger", [3] = function name
+ */
+export const PROCEDURE_RE = /^\s*(local\s+|internal\s+)*(procedure|trigger)\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/i;
+
+// ---------------------------------------------------------------------------
 // Attribute helpers
 // ---------------------------------------------------------------------------
 

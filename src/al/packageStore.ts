@@ -4,6 +4,8 @@ import * as path from 'path';
 import { AlPackage, AlAppJsonDependency, AlAppManifest, AlObject } from './types';
 import { readAppFile, readAppManifest } from './packageReader';
 import { parseAlSource } from './parser';
+import { processAllObjects } from './objectProcessor';
+import { resetEventSubscriberIndex, markEventSubscriberIndexReady } from './plugins/eventSubscriberPlugin';
 import * as logger from './logger';
 
 /**
@@ -11,6 +13,15 @@ import * as logger from './logger';
  * Keys are AlPackage.id strings.
  */
 const store = new Map<string, AlPackage>();
+
+/**
+ * Lookup maps for fast object resolution by source location or ID.
+ * Rebuilt during reloadAllPackages() to support O(1) lookups instead of
+ * linear scans through packages/objects.
+ */
+const objectBySourcePath = new Map<string, { pkg: AlPackage; obj: AlObject }>();
+const objectByZipEntry = new Map<string, { pkg: AlPackage; obj: AlObject }>();
+const objectById = new Map<string, { pkg: AlPackage; obj: AlObject }>();
 
 export function getPackages(): AlPackage[] {
     return [...store.values()];
@@ -20,8 +31,59 @@ export function getPackageById(id: string): AlPackage | undefined {
     return store.get(id);
 }
 
+/**
+ * Find an object by its source file path (local .al file).
+ * O(1) lookup via prebuilt map.
+ */
+export function getObjectBySourcePath(filePath: string): { pkg: AlPackage; obj: AlObject } | undefined {
+    return objectBySourcePath.get(filePath);
+}
+
+/**
+ * Find an object by its ZIP entry name (packaged .app file).
+ * O(1) lookup via prebuilt map.
+ */
+export function getObjectByZipEntry(entryName: string): { pkg: AlPackage; obj: AlObject } | undefined {
+    return objectByZipEntry.get(entryName);
+}
+
+/**
+ * Find an object by its type and ID.
+ * O(1) lookup via prebuilt map.
+ */
+export function getObjectById(objType: string, objId: number): { pkg: AlPackage; obj: AlObject } | undefined {
+    const key = `${objType}::${objId}`;
+    return objectById.get(key);
+}
+
 export function clear(): void {
     store.clear();
+    objectBySourcePath.clear();
+    objectByZipEntry.clear();
+    objectById.clear();
+}
+
+/**
+ * Rebuild lookup maps after all packages are loaded.
+ * Called from reloadAllPackages().
+ */
+function rebuildObjectMaps(): void {
+    objectBySourcePath.clear();
+    objectByZipEntry.clear();
+    objectById.clear();
+
+    for (const pkg of store.values()) {
+        for (const obj of pkg.objects) {
+            if (obj.sourceFilePath) {
+                objectBySourcePath.set(obj.sourceFilePath, { pkg, obj });
+            }
+            if (obj.zipEntryName) {
+                objectByZipEntry.set(obj.zipEntryName, { pkg, obj });
+            }
+            const key = `${obj.type}::${obj.id}`;
+            objectById.set(key, { pkg, obj });
+        }
+    }
 }
 
 /**
@@ -98,6 +160,7 @@ export async function reloadLocalFile(absoluteFilePath: string): Promise<void> {
  */
 export async function reloadAllPackages(): Promise<void> {
     store.clear();
+    resetEventSubscriberIndex();
 
     const folders = vscode.workspace.workspaceFolders;
     if (!folders || folders.length === 0) {
@@ -274,7 +337,18 @@ export async function reloadAllPackages(): Promise<void> {
         }
     }
 
+    // ── Step 5: Build object lookup maps for fast O(1) resolution ────────────
+    rebuildObjectMaps();
+
+    // ── Step 6: Process all objects with registered processors ───────────────
+    // This single pass allows plugins to build indexes/caches without
+    // doing their own nested iterations through packages/objects.
+    const allPackages = getPackages();
+    await processAllObjects(allPackages);
+
     storeVersion++;
+    markEventSubscriberIndexReady(storeVersion);
+
     vscode.window.showInformationMessage(
         `Loaded ${store.size} package(s) with ${totalObjects()} object(s).`
     );

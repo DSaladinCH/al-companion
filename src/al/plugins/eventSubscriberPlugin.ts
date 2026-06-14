@@ -1,7 +1,8 @@
 import * as vscode from 'vscode';
 import { AlObject, AlPackage, AlEventSubscriber } from '../types';
 import { AlParserPlugin, registerPlugin } from '../parser';
-import { getPackages } from '../packageStore';
+import { getPackages, getStoreVersion } from '../packageStore';
+import { registerObjectProcessor, ObjectProcessor } from '../objectProcessor';
 import { findAttribute, parseAttributeArgs, unquote } from './parserUtils';
 import { showAlObjectUsingPreviewScheme } from '../commands';
 import * as logger from '../logger';
@@ -67,6 +68,101 @@ const eventSubscriberPlugin: AlParserPlugin = (_source: string, obj: AlObject): 
 registerPlugin(eventSubscriberPlugin);
 
 // ---------------------------------------------------------------------------
+// Event subscriber indexing (single-pass during package load)
+// ---------------------------------------------------------------------------
+
+/**
+ * Wrapper for a subscriber that includes its owning object and package.
+ * Stored in the index to avoid needing to search for the owner later.
+ */
+interface IndexedSubscriber {
+    sub: AlEventSubscriber;
+    obj: AlObject;
+    pkg: AlPackage;
+}
+
+/**
+ * Index structure built during reloadAllPackages() in a single pass.
+ * Avoids O(n³) search time by pre-grouping subscribers by their keys.
+ * Each indexed subscriber includes references to its owning object and package.
+ *
+ * Three indexes are built:
+ * - byPublisher: "Type::Name" → indexed subscribers on that object
+ * - byEvent: "Type::Name::EventName" → indexed subscribers of that event
+ * - byElement: "Type::Name::EventName::Element" → indexed subscribers filtering by element
+ */
+interface EventSubscriberIndex {
+    byPublisher: Map<string, IndexedSubscriber[]>;
+    byEvent: Map<string, IndexedSubscriber[]>;
+    byElement: Map<string, IndexedSubscriber[]>;
+}
+
+let eventSubscriberIndex: EventSubscriberIndex = {
+    byPublisher: new Map(),
+    byEvent: new Map(),
+    byElement: new Map(),
+};
+let eventSubscriberIndexVersion = -1;
+
+/**
+ * Processor that builds the event subscriber index.
+ * This runs once per object during reloadAllPackages() in a single pass.
+ */
+const eventSubscriberIndexer: ObjectProcessor = {
+    id: 'event-subscriber-indexer',
+    process(obj: AlObject, pkg: AlPackage): void {
+        for (const sub of obj.eventSubscribers) {
+            const publisherKey = `${sub.publisherObjectType}::${sub.publisherObjectName}`;
+            const eventKey = `${publisherKey}::${sub.eventName}`;
+            const elementKey = `${eventKey}::${sub.elementName}`;
+            const indexed: IndexedSubscriber = { sub, obj, pkg };
+
+            // Index by publisher
+            if (!eventSubscriberIndex.byPublisher.has(publisherKey)) {
+                eventSubscriberIndex.byPublisher.set(publisherKey, []);
+            }
+            eventSubscriberIndex.byPublisher.get(publisherKey)!.push(indexed);
+
+            // Index by event
+            if (!eventSubscriberIndex.byEvent.has(eventKey)) {
+                eventSubscriberIndex.byEvent.set(eventKey, []);
+            }
+            eventSubscriberIndex.byEvent.get(eventKey)!.push(indexed);
+
+            // Index by element (if element specified)
+            if (sub.elementName) {
+                if (!eventSubscriberIndex.byElement.has(elementKey)) {
+                    eventSubscriberIndex.byElement.set(elementKey, []);
+                }
+                eventSubscriberIndex.byElement.get(elementKey)!.push(indexed);
+            }
+        }
+    },
+};
+
+registerObjectProcessor(eventSubscriberIndexer);
+
+/**
+ * Reset the index before a new reload starts.
+ * Called from packageStore before processAllObjects.
+ */
+export function resetEventSubscriberIndex(): void {
+    eventSubscriberIndex = {
+        byPublisher: new Map(),
+        byEvent: new Map(),
+        byElement: new Map(),
+    };
+}
+
+/**
+ * Mark the index as complete after a successful reload.
+ * Called from packageStore after processAllObjects.
+ */
+export function markEventSubscriberIndexReady(version: number): void {
+    eventSubscriberIndexVersion = version;
+}
+
+// ---------------------------------------------------------------------------
 // Search command
 // ---------------------------------------------------------------------------
 
@@ -83,24 +179,27 @@ async function searchEventSubscriberCommand(): Promise<void> {
         return;
     }
 
-    // ── Step 1: pick publisher object ────────────────────────────────────────
+    // Ensure index is up-to-date
+    const currentVersion = getStoreVersion();
+    if (eventSubscriberIndexVersion !== currentVersion) {
+        // Index is stale; it will be rebuilt on next reloadAllPackages()
+        vscode.window.showWarningMessage('Symbol index is being rebuilt. Please try again.');
+        return;
+    }
+
+    // ── Step 1: pick publisher object (O(1) from index) ──────────────────────
     type PublisherItem = vscode.QuickPickItem & { publisherType: string; publisherName: string };
 
     const publisherMap = new Map<string, PublisherItem>();
-    for (const pkg of packages) {
-        for (const obj of pkg.objects) {
-            for (const sub of obj.eventSubscribers) {
-                const key = `${sub.publisherObjectType}::${sub.publisherObjectName}`;
-                if (!publisherMap.has(key)) {
-                    publisherMap.set(key, {
-                        label: `$(symbol-class) ${sub.publisherObjectName}`,
-                        description: sub.publisherObjectType,
-                        publisherType: sub.publisherObjectType,
-                        publisherName: sub.publisherObjectName,
-                    });
-                }
-            }
-        }
+    for (const [publisherKey, indexed] of eventSubscriberIndex.byPublisher) {
+        if (indexed.length === 0) { continue; }
+        const first = indexed[0];
+        publisherMap.set(publisherKey, {
+            label: `$(symbol-class) ${first.sub.publisherObjectName}`,
+            description: first.sub.publisherObjectType,
+            publisherType: first.sub.publisherObjectType,
+            publisherName: first.sub.publisherObjectName,
+        });
     }
 
     const publisherItems = [...publisherMap.values()].sort((a, b) =>
@@ -120,16 +219,13 @@ async function searchEventSubscriberCommand(): Promise<void> {
     if (!pickedPublisher) { return; }
 
     const { publisherType, publisherName } = pickedPublisher;
+    const publisherKey = `${publisherType}::${publisherName}`;
 
-    // ── Step 2: pick event name ──────────────────────────────────────────────
-    const eventNames = collectDistinct(
-        packages,
-        sub => sub.publisherObjectType === publisherType && sub.publisherObjectName === publisherName,
-        sub => sub.eventName
-    );
+    // ── Step 2: pick event name (O(1) from index) ────────────────────────────
+    const indexed = eventSubscriberIndex.byPublisher.get(publisherKey) ?? [];
+    const eventNames = [...new Set(indexed.map(i => i.sub.eventName))].sort();
 
     const eventItems: vscode.QuickPickItem[] = eventNames
-        .sort()
         .map(e => ({ label: `$(symbol-event) ${e}`, description: e }));
 
     const pickedEvent = await vscode.window.showQuickPick(eventItems, {
@@ -139,16 +235,11 @@ async function searchEventSubscriberCommand(): Promise<void> {
     if (!pickedEvent) { return; }
 
     const eventName = pickedEvent.description!;
+    const eventKey = `${publisherKey}::${eventName}`;
 
-    // ── Step 3: pick element (optional) ─────────────────────────────────────
-    const elements = collectDistinct(
-        packages,
-        sub =>
-            sub.publisherObjectType === publisherType &&
-            sub.publisherObjectName === publisherName &&
-            sub.eventName === eventName,
-        sub => sub.elementName
-    ).filter(e => e !== '');
+    // ── Step 3: pick element (optional, O(1) from index) ────────────────────
+    const eventIndexed = eventSubscriberIndex.byEvent.get(eventKey) ?? [];
+    const elements = [...new Set(eventIndexed.map(i => i.sub.elementName).filter(e => e !== ''))].sort();
 
     let elementFilter = '';
     if (elements.length > 0) {
@@ -160,7 +251,7 @@ async function searchEventSubscriberCommand(): Promise<void> {
         };
         const elementItems: ElementItem[] = [
             anyItem,
-            ...elements.sort().map(e => ({ label: `$(symbol-field) ${e}`, description: e, value: e })),
+            ...elements.map(e => ({ label: `$(symbol-field) ${e}`, description: e, value: e })),
         ];
 
         const pickedElement = await vscode.window.showQuickPick(elementItems, {
@@ -171,8 +262,8 @@ async function searchEventSubscriberCommand(): Promise<void> {
         elementFilter = (pickedElement as ElementItem).value;
     }
 
-    // ── Run search & show results ────────────────────────────────────────────
-    const results = searchEventSubscribers(packages, publisherType, publisherName, eventName, elementFilter);
+    // ── Run search & show results (O(n) where n = matching subscribers) ──────
+    const results = searchEventSubscribersFromIndex(packages, eventKey, elementFilter);
     logger.debug(`Event subscriber search "${publisherType}::${publisherName}.${eventName}" → ${results.length} result(s)`);
 
     if (results.length === 0) {
@@ -185,25 +276,26 @@ async function searchEventSubscriberCommand(): Promise<void> {
     await showResults(results, publisherName, eventName);
 }
 
-function searchEventSubscribers(
+/**
+ * Search for event subscribers using the pre-built index.
+ * O(n) where n = matching subscribers, no nested loops needed.
+ * Package/object references are already stored in the index.
+ */
+function searchEventSubscribersFromIndex(
     packages: AlPackage[],
-    publisherType: string,
-    publisherName: string,
-    eventName: string,
-    element: string
+    eventKey: string,
+    elementFilter: string
 ): EventSubscriberResult[] {
     const results: EventSubscriberResult[] = [];
-    for (const pkg of packages) {
-        for (const obj of pkg.objects) {
-            for (const sub of obj.eventSubscribers) {
-                if (sub.publisherObjectType !== publisherType) { continue; }
-                if (sub.publisherObjectName !== publisherName) { continue; }
-                if (sub.eventName !== eventName) { continue; }
-                if (element && sub.elementName !== element) { continue; }
-                results.push({ pkg, obj, sub });
-            }
+    const indexed = eventSubscriberIndex.byEvent.get(eventKey) ?? [];
+
+    // Filter by element if specified; extract sub/obj/pkg directly from index
+    for (const item of indexed) {
+        if (!elementFilter || item.sub.elementName === elementFilter) {
+            results.push({ pkg: item.pkg, obj: item.obj, sub: item.sub });
         }
     }
+
     return results;
 }
 
@@ -233,22 +325,6 @@ async function showResults(
     const r = picked.result;
 
     await showAlObjectUsingPreviewScheme(r.obj, r.pkg, r.sub.fn.line);
-}
-
-function collectDistinct(
-    packages: AlPackage[],
-    predicate: (sub: AlEventSubscriber) => boolean,
-    getValue: (sub: AlEventSubscriber) => string
-): string[] {
-    const seen = new Set<string>();
-    for (const pkg of packages) {
-        for (const obj of pkg.objects) {
-            for (const sub of obj.eventSubscribers) {
-                if (predicate(sub)) { seen.add(getValue(sub)); }
-            }
-        }
-    }
-    return [...seen];
 }
 
 // ---------------------------------------------------------------------------

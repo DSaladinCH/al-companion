@@ -1,11 +1,5 @@
 import * as vscode from 'vscode';
-
-// ---------------------------------------------------------------------------
-// Procedure / trigger detection (mirrors the core parser regex structure)
-// ---------------------------------------------------------------------------
-
-const PROCEDURE_RE =
-    /^\s*(local\s+|internal\s+)*(procedure|trigger)\s+([A-Za-z_][A-Za-z0-9_]*)/i;
+import { PROCEDURE_RE } from './parserUtils';
 
 // ---------------------------------------------------------------------------
 // Command implementation
